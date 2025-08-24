@@ -14,7 +14,6 @@ interface SpotifyTrack {
     name: string;
     images: { url: string; width: number; height: number }[];
   };
-  external_urls: { spotify: string };
 }
 
 export const MusicPlayer: React.FC = () => {
@@ -28,11 +27,10 @@ export const MusicPlayer: React.FC = () => {
   const [isSearching, setIsSearching] = useState(false);
 
   // ⚠️ IMPORTANT: Replace with your actual Spotify Client ID and Redirect URI.
+  // The Redirect URI MUST be an exact match to what's in your Dashboard.
   const CLIENT_ID = '83721f40f91c46bcae3379a3762f114e';
-const REDIRECT_URI = 'https://blogephesians.onrender.com/'; 
-const SCOPES = 'user-read-private user-read-email'; // Add other required scopes
-
-const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}`;
+  const REDIRECT_URI = 'https://blogephesians.onrender.com';
+  const SCOPES = 'user-top-read playlist-modify-private playlist-modify-public';
 
   // Handles Spotify authentication after redirect
   useEffect(() => {
@@ -156,11 +154,6 @@ const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&r
     } finally {
       setIsSearching(false);
     }
-  };
-
-  const handleSearch = () => {
-    if (!searchQuery.trim()) return;
-    searchSpotifyTracks(searchQuery);
   };
 
   const handleTrackSelect = (track: SpotifyTrack) => {

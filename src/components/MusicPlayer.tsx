@@ -1,25 +1,21 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, SkipBack, SkipForward, Volume2, VolumeX, Shuffle, Repeat, Heart, Search, Music, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, Music, ExternalLink, RefreshCw } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
-import { Slider } from './ui/slider';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion'; // Replaced 'motion/react' with 'framer-motion'
 import { toast } from 'sonner';
-import { DolphinSpinner } from './LoadingScreen';
+import { DolphinSpinner } from './LoadingScreen'; // Assuming this is a custom spinner component
 
 interface SpotifyTrack {
   id: string;
   name: string;
   artists: { name: string }[];
-  album: { 
-    name: string; 
+  album: {
+    name: string;
     images: { url: string; width: number; height: number }[];
   };
-  duration_ms: number;
-  preview_url?: string;
   external_urls: { spotify: string };
-  popularity: number;
 }
 
 interface SpotifySearchResponse {
@@ -29,111 +25,33 @@ interface SpotifySearchResponse {
   };
 }
 
-// Helper functions for PKCE flow using Web Crypto API
-const generateRandomString = (length: number): string => {
-    const array = new Uint8Array(length);
-    window.crypto.getRandomValues(array);
-    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let text = '';
-    for (let i = 0; i < length; i++) {
-        text += possible.charAt(array[i] % possible.length);
-    }
-    return text;
-};
-
-const sha256 = async (plain: string): Promise<string> => {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(plain);
-    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
-    return bufferToBase64Url(hashBuffer);
-};
-
-const bufferToBase64Url = (buffer: ArrayBuffer): string => {
-    return btoa(String.fromCharCode.apply(null, new Uint8Array(buffer) as any))
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_')
-        .replace(/=+$/, '');
-};
-
 export const MusicPlayer: React.FC = () => {
-  const [isPlaying, setIsPlaying] = useState(false);
   const [currentTrack, setCurrentTrack] = useState<SpotifyTrack | null>(null);
   const [tracks, setTracks] = useState<SpotifyTrack[]>([]);
-  const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
-  const [volume, setVolume] = useState(75);
-  const [isMuted, setIsMuted] = useState(false);
-  const [isShuffled, setIsShuffled] = useState(false);
-  const [repeatMode, setRepeatMode] = useState<'off' | 'one' | 'all'>('off');
-  const [currentTime, setCurrentTime] = useState(0);
-  const [isMinimized, setIsMinimized] = useState(false);
-  const [isLiked, setIsLiked] = useState(false);
-  const [isExpanded, setIsExpanded] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
-  
-  const progressIntervalRef = useRef<NodeJS.Timeout>();
-  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [iframeUri, setIframeUri] = useState<string | null>(null);
+  const [isMinimized, setIsMinimized] = useState(false);
 
   // Spotify API configuration
-  // IMPORTANT: Replace with your actual Spotify Client ID
-  const CLIENT_ID = '83721f40f91c46bcae3379a3762f114e';
-  // IMPORTANT: Replace with your actual Redirect URI
-  const REDIRECT_URI = 'https://blogephesians.onrender.com/';
-  const SCOPES = [
-    'streaming',
-    'user-read-email',
-    'user-read-private',
-    'user-read-playback-state',
-    'user-modify-playback-state',
-    'playlist-read-private',
-    'playlist-read-collaborative'
-  ].join(' ');
+  const CLIENT_ID = 'YOUR_SPOTIFY_CLIENT_ID'; // ⚠️ IMPORTANT: Replace with your actual Client ID
+  const REDIRECT_URI = window.location.origin;
+  const SCOPES = 'user-read-private user-read-email';
 
-  // PKCE Authorization Code Flow
+  // Handles Spotify authentication after redirect
   useEffect(() => {
-    const urlParams = new URLSearchParams(window.location.search);
-    const code = urlParams.get('code');
-    
-    if (code) {
-      const codeVerifier = localStorage.getItem('code_verifier');
-      if (codeVerifier) {
-        const exchangeCodeForToken = async () => {
-          try {
-            const response = await fetch('https://accounts.spotify.com/api/token', {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/x-www-form-urlencoded',
-              },
-              body: new URLSearchParams({
-                client_id: CLIENT_ID,
-                grant_type: 'authorization_code',
-                code: code,
-                redirect_uri: REDIRECT_URI,
-                code_verifier: codeVerifier,
-              }).toString(),
-            });
-
-            if (!response.ok) {
-              const errorData = await response.json();
-              throw new Error(errorData.error_description || 'Token exchange failed');
-            }
-
-            const data = await response.json();
-            setAccessToken(data.access_token);
-            localStorage.setItem('spotify_access_token', data.access_token);
-            localStorage.removeItem('code_verifier');
-            window.history.pushState({}, '', '/');
-            toast.success('Successfully connected to Spotify!');
-          } catch (error) {
-            console.error('Error exchanging code for token:', error);
-            toast.error('Failed to authenticate. Please try again.');
-          }
-        };
-        exchangeCodeForToken();
+    const hash = window.location.hash;
+    if (hash) {
+      const token = hash.split('&').find(s => s.startsWith('access_token'))?.split('=')[1];
+      if (token) {
+        setAccessToken(token);
+        window.location.hash = ''; // Clear hash from URL for cleaner look
+        localStorage.setItem('spotify_access_token', token);
+        toast.success('Successfully connected to Spotify!');
       }
     } else {
       const savedToken = localStorage.getItem('spotify_access_token');
@@ -143,106 +61,25 @@ export const MusicPlayer: React.FC = () => {
     }
   }, []);
 
+  // Fetch initial popular tracks on component mount if an access token exists
   useEffect(() => {
     if (accessToken) {
-      setTimeout(() => searchSpotifyTracks('top hits 2024'), 500); 
+      searchSpotifyTracks('top hits 2024');
     }
   }, [accessToken]);
 
-  useEffect(() => {
-    const handleNext = () => {
-        if (tracks.length === 0) return;
-        let nextIndex = 0;
-        if (isShuffled) {
-            nextIndex = Math.floor(Math.random() * tracks.length);
-        } else {
-            nextIndex = currentTrackIndex + 1;
-            if (nextIndex >= tracks.length) {
-                nextIndex = repeatMode === 'all' ? 0 : currentTrackIndex;
-                if (repeatMode === 'off') {
-                    setIsPlaying(false);
-                    return;
-                }
-            }
-        }
-        
-        if (audioRef.current) {
-            audioRef.current.pause();
-            audioRef.current.currentTime = 0;
-            audioRef.current = null;
-        }
-        
-        setCurrentTrackIndex(nextIndex);
-        setCurrentTrack(tracks[nextIndex]);
-        setCurrentTime(0);
-        setIsPlaying(false);
-    };
-
-    const handleTimeUpdate = () => {
-        if (audioRef.current) {
-            const current = audioRef.current.currentTime * 1000;
-            setCurrentTime(current);
-            if (current >= 30000) {
-                handleNext();
-            }
-        }
-    };
-
-    const handleNextOnEnd = () => {
-        handleNext();
-    };
-
-    if (isPlaying && currentTrack && audioRef.current) {
-        audioRef.current.addEventListener('timeupdate', handleTimeUpdate);
-        audioRef.current.addEventListener('ended', handleNextOnEnd);
-        progressIntervalRef.current = setInterval(() => {
-            if (audioRef.current) {
-                const current = audioRef.current.currentTime * 1000;
-                setCurrentTime(current);
-            }
-        }, 500);
-    } else {
-        if (audioRef.current) {
-            audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
-            audioRef.current.removeEventListener('ended', handleNextOnEnd);
-        }
-        if (progressIntervalRef.current) {
-            clearInterval(progressIntervalRef.current);
-        }
-    }
-
-    return () => {
-        if (audioRef.current) {
-            audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
-            audioRef.current.removeEventListener('ended', handleNextOnEnd);
-        }
-        if (progressIntervalRef.current) {
-            clearInterval(progressIntervalRef.current);
-        }
-    };
-}, [isPlaying, currentTrack, tracks, isShuffled, currentTrackIndex, repeatMode]);
-
-  const connectToSpotify = async () => {
+  const connectToSpotify = () => {
     setIsConnecting(true);
-    const codeVerifier = generateRandomString(128);
-    const codeChallenge = await sha256(codeVerifier);
-    const authUrl = `https://accounts.spotify.com/authorize` +
-      `?client_id=${CLIENT_ID}` +
-      `&response_type=code` +
-      `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
-      `&scope=${encodeURIComponent(SCOPES)}` +
-      `&code_challenge_method=S256` +
-      `&code_challenge=${codeChallenge}`;
-    
-    localStorage.setItem('code_verifier', codeVerifier);
+    const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}`;
     window.location.href = authUrl;
   };
 
   const searchSpotifyTracks = async (query: string): Promise<void> => {
     if (!accessToken) {
-      toast.error('Please connect to Spotify first');
+      toast.error('Please connect to Spotify first.');
       return;
     }
+
     setIsSearching(true);
     try {
       const response = await fetch(
@@ -253,32 +90,31 @@ export const MusicPlayer: React.FC = () => {
           }
         }
       );
+
       if (response.status === 401) {
         localStorage.removeItem('spotify_access_token');
         setAccessToken(null);
-        toast.error('Session expired. Please reconnect to Spotify');
+        toast.error('Session expired. Please reconnect to Spotify.');
         return;
       }
+
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error?.message || 'Failed to search tracks');
+        throw new Error('Failed to search tracks.');
       }
+
       const data: SpotifySearchResponse = await response.json();
-      if (searchQuery === query || query === 'top hits 2024') {
-        setSearchResults(data.tracks.items);
-        if (!showSearch && query !== 'top hits 2024') {
-          setShowSearch(true);
-        }
-        if (tracks.length === 0 && data.tracks.items.length > 0) {
-          setTracks(data.tracks.items);
-          setCurrentTrack(data.tracks.items[0]);
-        }
+      setSearchResults(data.tracks.items);
+      
+      // If no track is currently playing, select the first one from the search results
+      if (!currentTrack && data.tracks.items.length > 0) {
+        handleTrackSelect(data.tracks.items[0]);
       }
-      toast.success(`Found ${data.tracks.items.length} tracks`);
+      
+      toast.success(`Found ${data.tracks.items.length} tracks.`);
     } catch (error) {
       console.error('Spotify search error:', error);
+      toast.error('Failed to search tracks.');
       setSearchResults([]);
-      toast.error('Failed to search tracks');
     } finally {
       setIsSearching(false);
     }
@@ -289,126 +125,24 @@ export const MusicPlayer: React.FC = () => {
     searchSpotifyTracks(searchQuery);
   };
 
-  const handlePlayPause = () => {
-    if (!currentTrack) {
-      toast.error('No track selected');
-      return;
-    }
-    if (!currentTrack.preview_url) {
-      toast.warning('Preview not available, opening in Spotify...');
-      window.open(currentTrack.external_urls.spotify, '_blank');
-      return;
-    }
-    if (audioRef.current) {
-      if (isPlaying) {
-        audioRef.current.pause();
-        setIsPlaying(false);
-      } else {
-        audioRef.current.play().then(() => {
-          setIsPlaying(true);
-          toast.success(`Now playing: ${currentTrack.name}`);
-        }).catch(error => {
-          console.error('Audio play error:', error);
-          toast.error('Failed to play audio');
-        });
-      }
-    } else {
-      audioRef.current = new Audio(currentTrack.preview_url);
-      audioRef.current.volume = (isMuted ? 0 : volume) / 100;
-      audioRef.current.play().then(() => {
-        setIsPlaying(true);
-        toast.success(`Now playing: ${currentTrack.name}`);
-      }).catch(error => {
-        console.error('Audio play error:', error);
-        toast.error('Failed to play audio');
-      });
-    }
-  };
-
-  const handlePrevious = () => {
-    if (currentTime > 3000) {
-      setCurrentTime(0);
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-      }
-      return;
-    }
-    let prevIndex = currentTrackIndex - 1;
-    if (prevIndex < 0) {
-      prevIndex = tracks.length - 1;
-    }
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current.currentTime = 0;
-      audioRef.current = null;
-    }
-    setCurrentTrackIndex(prevIndex);
-    setCurrentTrack(tracks[prevIndex]);
-    setCurrentTime(0);
-    setIsPlaying(false);
-  };
-
-  const handleTrackSelect = (track: SpotifyTrack, fromSearch = false) => {
-    if (fromSearch) {
-      if (!tracks.find(t => t.id === track.id)) {
-        setTracks(prev => [...prev, track]);
-      }
-    }
-    const trackIndex = tracks.findIndex(t => t.id === track.id);
-    if (trackIndex !== -1) {
-      setCurrentTrackIndex(trackIndex);
-    } else {
-      const newTracks = [...tracks, track];
-      setTracks(newTracks);
-      setCurrentTrackIndex(newTracks.length - 1);
-    }
+  const handleTrackSelect = (track: SpotifyTrack) => {
     setCurrentTrack(track);
-    setCurrentTime(0);
+    // Use the track's ID to construct the Spotify embed URI
+    setIframeUri(`https://open.spotify.com/embed/track/${track.id}?utm_source=generator`);
     setShowSearch(false);
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-    setIsPlaying(false);
-  };
-
-  const handleVolumeChange = (value: number[]) => {
-    const newVolume = value[0];
-    setVolume(newVolume);
-    if (newVolume > 0) setIsMuted(false);
-    if (audioRef.current) {
-      audioRef.current.volume = newVolume / 100;
-    }
-  };
-
-  const handleVolumeToggle = () => {
-    setIsMuted(!isMuted);
-    if (audioRef.current) {
-      audioRef.current.volume = isMuted ? volume / 100 : 0;
-    }
-  };
-
-  const handleRepeatToggle = () => {
-    const modes: ('off' | 'one' | 'all')[] = ['off', 'all', 'one'];
-    const currentIndex = modes.indexOf(repeatMode);
-    setRepeatMode(modes[(currentIndex + 1) % modes.length]);
-  };
-
-  const formatTime = (ms: number) => {
-    const seconds = Math.floor(ms / 1000);
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
+    toast.success(`Now playing: ${track.name} by ${track.artists[0].name}`);
   };
 
   const getAlbumImage = (track: SpotifyTrack) => {
-    const image = track.album.images.find(img => img.width >= 64);
-    return image ? image.url : 'https://via.placeholder.com/64x64/1ed760/000000?text=♪';
+    return track.album.images.find(img => img.width >= 64)?.url ||
+      track.album.images[0]?.url ||
+      'https://via.placeholder.com/64x64/1ed760/000000?text=♪';
   };
 
+  // Render the "Connect to Spotify" screen if no access token exists
   if (!accessToken) {
     return (
-      <motion.div 
+      <motion.div
         className="fixed bottom-4 right-4 z-50 w-80"
         initial={{ x: 400, opacity: 0 }}
         animate={{ x: 0, opacity: 1 }}
@@ -417,16 +151,13 @@ export const MusicPlayer: React.FC = () => {
         <Card className="bg-gray-900 backdrop-blur-lg border-gray-700 shadow-2xl">
           <CardContent className="p-6 text-center">
             <div className="flex flex-col items-center space-y-4">
-              <motion.div
-                animate={{ scale: [1, 1.1, 1] }}
-                transition={{ duration: 2, repeat: Infinity }}
-              >
+              <motion.div animate={{ scale: [1, 1.1, 1] }} transition={{ duration: 2, repeat: Infinity }}>
                 <Music className="w-12 h-12 text-green-400" />
               </motion.div>
               <div>
                 <h3 className="text-white font-medium mb-2">Connect to Spotify</h3>
                 <p className="text-gray-400 text-sm mb-4">
-                  Get access to millions of songs
+                  Log in to get full playback and access to your playlists.
                 </p>
               </div>
               <Button
@@ -443,9 +174,6 @@ export const MusicPlayer: React.FC = () => {
                   </>
                 )}
               </Button>
-              <p className="text-xs text-gray-500 text-center">
-                Free Spotify account required. Only 30-second previews available.
-              </p>
             </div>
           </CardContent>
         </Card>
@@ -453,32 +181,21 @@ export const MusicPlayer: React.FC = () => {
     );
   }
 
-  const progressPercentage = currentTrack 
-    ? Math.min((currentTime / Math.min(currentTrack.duration_ms, 30000)) * 100, 100)
-    : 0;
-
+  // Render the minimized player button
   if (isMinimized) {
     return (
-      <motion.div 
+      <motion.div
         className="fixed bottom-4 right-4 z-50"
         initial={{ scale: 0, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
         transition={{ type: "spring", duration: 0.5 }}
       >
-        <motion.div
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
-        >
+        <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
           <Button
             onClick={() => setIsMinimized(false)}
-            className="w-14 h-14 rounded-full bg-green-500 hover:bg-green-600 shadow-2xl"
+            className="w-14 h-14 rounded-full bg-green-500 hover:bg-green-600 shadow-2xl text-black"
           >
-            <motion.div
-              animate={isPlaying ? { scale: [1, 1.1, 1] } : { scale: 1 }}
-              transition={{ duration: 0.6, repeat: isPlaying ? Infinity : 0 }}
-            >
-              {isPlaying ? <Pause className="w-6 h-6 text-black" /> : <Play className="w-6 h-6 text-black ml-0.5" />}
-            </motion.div>
+            <Music className="w-6 h-6" />
           </Button>
         </motion.div>
       </motion.div>
@@ -486,8 +203,8 @@ export const MusicPlayer: React.FC = () => {
   }
 
   return (
-    <motion.div 
-      className={`fixed bottom-4 right-4 z-50 ${isExpanded ? 'w-96' : 'w-80'}`}
+    <motion.div
+      className="fixed bottom-4 right-4 z-50 w-80"
       initial={{ x: 400, opacity: 0 }}
       animate={{ x: 0, opacity: 1 }}
       transition={{ type: "spring", duration: 0.6, delay: 0.5 }}
@@ -496,14 +213,10 @@ export const MusicPlayer: React.FC = () => {
         <CardContent className="p-0">
           {/* Spotify Header */}
           <div className="flex items-center justify-between p-3 bg-gradient-to-r from-green-600 to-green-500 text-black">
-            <motion.div 
-              className="flex items-center space-x-2"
-              animate={{ opacity: [1, 0.8, 1] }}
-              transition={{ duration: 2, repeat: Infinity }}
-            >
+            <div className="flex items-center space-x-2">
               <Music className="w-4 h-4" />
               <h3 className="text-sm font-bold">Spotify Player</h3>
-            </motion.div>
+            </div>
             <div className="flex items-center space-x-1">
               <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
                 <Button
@@ -522,13 +235,12 @@ export const MusicPlayer: React.FC = () => {
                   onClick={() => setIsMinimized(true)}
                   className="w-6 h-6 text-black hover:text-black/80 p-0 hover:bg-white/20"
                 >
-                  <span className="text-xl leading-none">×</span>
+                  ×
                 </Button>
               </motion.div>
             </div>
           </div>
-
-          {/* Search Section */}
+          
           <AnimatePresence>
             {showSearch && (
               <motion.div
@@ -563,16 +275,16 @@ export const MusicPlayer: React.FC = () => {
                       {searchResults.map((track) => (
                         <motion.button
                           key={track.id}
-                          onClick={() => handleTrackSelect(track, true)}
+                          onClick={() => handleTrackSelect(track)}
                           className="w-full text-left p-2 rounded text-xs hover:bg-gray-700 transition-colors text-white"
                           whileHover={{ scale: 1.02, x: 4 }}
                           whileTap={{ scale: 0.98 }}
                         >
                           <div className="flex items-center space-x-2">
-                            <img 
-                              src={getAlbumImage(track)} 
-                              alt={track.album.name} 
-                              className="w-6 h-6 rounded" 
+                            <img
+                              src={getAlbumImage(track)}
+                              alt={track.album.name}
+                              className="w-6 h-6 rounded"
                             />
                             <div className="flex-1 min-w-0">
                               <div className="truncate font-medium">{track.name}</div>
@@ -598,184 +310,34 @@ export const MusicPlayer: React.FC = () => {
               </motion.div>
             )}
           </AnimatePresence>
+          
+          {/* Main Iframe Player */}
+          {iframeUri && (
+            <motion.div 
+              key={iframeUri}
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ duration: 0.5 }}
+              className="w-full h-80"
+            >
+              <iframe
+                title="Spotify Embed Player"
+                src={iframeUri}
+                width="100%"
+                height="100%"
+                style={{ minHeight: '320px', border: 'none' }}
+                allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                loading="lazy"
+              />
+            </motion.div>
+          )}
 
-          {/* Current Track */}
-          {currentTrack && (
-            <div className="p-4">
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={currentTrack.id}
-                  initial={{ opacity: 0, x: 20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: -20 }}
-                  transition={{ duration: 0.3 }}
-                  className="flex items-center space-x-3 mb-4"
-                >
-                  <motion.div
-                    className="relative"
-                    animate={isPlaying ? { rotate: 360 } : { rotate: 0 }}
-                    transition={{ duration: 10, repeat: isPlaying ? Infinity : 0, ease: "linear" }}
-                  >
-                    <img 
-                      src={getAlbumImage(currentTrack)} 
-                      alt={currentTrack.album.name}
-                      className="w-12 h-12 rounded-lg shadow-lg"
-                    />
-                    {isPlaying && (
-                      <motion.div
-                        className="absolute inset-0 bg-black/30 rounded-lg flex items-center justify-center"
-                        animate={{ opacity: [0, 1, 0] }}
-                        transition={{ duration: 2, repeat: Infinity }}
-                      >
-                        <div className="w-2 h-2 bg-green-400 rounded-full" />
-                      </motion.div>
-                    )}
-                  </motion.div>
-                  
-                  <div className="flex-1 min-w-0">
-                    <h4 className="text-white font-medium text-sm truncate">{currentTrack.name}</h4>
-                    <p className="text-gray-400 text-xs truncate">{currentTrack.artists[0].name}</p>
-                  </div>
-
-                  <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => window.open(currentTrack.external_urls.spotify, '_blank')}
-                      className="w-8 h-8 p-0"
-                    >
-                      <ExternalLink className="w-4 h-4 text-green-400" />
-                    </Button>
-                  </motion.div>
-                </motion.div>
-              </AnimatePresence>
-
-              {/* Progress Bar */}
-              <div className="space-y-2 mb-4">
-                <div className="relative">
-                  <Slider
-                    value={[progressPercentage]}
-                    onValueChange={(value) => {
-                      if (currentTrack && audioRef.current) {
-                        const newTime = (value[0] / 100) * Math.min(currentTrack.duration_ms, 30000);
-                        audioRef.current.currentTime = newTime / 1000;
-                        setCurrentTime(newTime);
-                      }
-                    }}
-                    max={100}
-                    step={0.1}
-                    className="w-full"
-                  />
-                </div>
-                <div className="flex justify-between text-xs text-gray-400">
-                  <span>{formatTime(currentTime)}</span>
-                  <span>{formatTime(Math.min(currentTrack.duration_ms, 30000))}</span>
-                </div>
-              </div>
-
-              {/* Controls */}
-              <div className="flex items-center justify-center space-x-4 mb-4">
-                <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setIsShuffled(!isShuffled)}
-                    className={`w-8 h-8 p-0 ${isShuffled ? 'text-green-400' : 'text-gray-400 hover:text-white'}`}
-                  >
-                    <Shuffle className="w-4 h-4" />
-                  </Button>
-                </motion.div>
-
-                <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handlePrevious}
-                    className="w-8 h-8 p-0 text-gray-400 hover:text-white"
-                  >
-                    <SkipBack className="w-4 h-4" />
-                  </Button>
-                </motion.div>
-
-                <motion.div 
-                  whileHover={{ scale: 1.1 }} 
-                  whileTap={{ scale: 0.9 }}
-                  className="relative"
-                >
-                  <Button
-                    onClick={handlePlayPause}
-                    className="w-10 h-10 rounded-full bg-green-500 hover:bg-green-600 text-black p-0"
-                  >
-                    <motion.div
-                      animate={isPlaying ? { scale: [1, 1.1, 1] } : { scale: 1 }}
-                      transition={{ duration: 0.6, repeat: isPlaying ? Infinity : 0 }}
-                    >
-                      {isPlaying ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5 ml-0.5" />}
-                    </motion.div>
-                  </Button>
-                </motion.div>
-
-                <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleTrackSelect(tracks[currentTrackIndex + 1])}
-                    className="w-8 h-8 p-0 text-gray-400 hover:text-white"
-                  >
-                    <SkipForward className="w-4 h-4" />
-                  </Button>
-                </motion.div>
-
-                <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleRepeatToggle}
-                    className={`w-8 h-8 p-0 relative ${
-                      repeatMode !== 'off' ? 'text-green-400' : 'text-gray-400 hover:text-white'
-                    }`}
-                  >
-                    <Repeat className="w-4 h-4" />
-                    {repeatMode === 'one' && (
-                      <div className="absolute top-1 right-1 w-2 h-2 bg-green-400 rounded-full" />
-                    )}
-                  </Button>
-                </motion.div>
-              </div>
-
-              {/* Volume Control */}
-              <div className="flex items-center space-x-2">
-                <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={handleVolumeToggle}
-                    className="w-6 h-6 p-0 text-gray-400 hover:text-white"
-                  >
-                    {isMuted || volume === 0 ? (
-                      <VolumeX className="w-4 h-4" />
-                    ) : (
-                      <Volume2 className="w-4 h-4" />
-                    )}
-                  </Button>
-                </motion.div>
-                <Slider
-                  value={[isMuted ? 0 : volume]}
-                  onValueChange={handleVolumeChange}
-                  max={100}
-                  step={1}
-                  className="flex-1"
-                />
-                <span className="text-xs text-gray-400 w-8 text-right">
-                  {isMuted ? 0 : volume}
-                </span>
-              </div>
-
-              {!currentTrack.preview_url && (
-                <p className="text-xs text-yellow-400 text-center mt-2">
-                  Preview not available - click play to open in Spotify
-                </p>
-              )}
+          {/* Fallback Message */}
+          {!iframeUri && (
+            <div className="p-4 text-center">
+              <p className="text-gray-400 text-sm">
+                Search for a song to begin playing!
+              </p>
             </div>
           )}
         </CardContent>

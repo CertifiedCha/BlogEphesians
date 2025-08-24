@@ -33,10 +33,6 @@ const REDIRECT_URI = 'https://blogephesians.onrender.com/';
 const SCOPES = 'user-read-private user-read-email'; // Add other required scopes
 
 const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}`;
-  
-  const CLIENT_ID = '83721f40f91c46bcae3379a3762f114e';
-  const REDIRECT_URI = 'https://blogephesians.onrender.com/';
-  const SCOPES = 'user-top-read playlist-modify-private playlist-modify-public';
 
   // Handles Spotify authentication after redirect
   useEffect(() => {

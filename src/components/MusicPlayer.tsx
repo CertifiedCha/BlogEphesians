@@ -53,7 +53,7 @@ export const MusicPlayer: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Spotify API configuration
-  const CLIENT_ID = 'y83721f40f91c46bcae3379a3762f114e'; // Replace with your Spotify Client ID
+  const CLIENT_ID = '83721f40f91c46bcae3379a3762f114e'; // Replace with your Spotify Client ID
   const REDIRECT_URI = window.location.origin;
   const SCOPES = [
     'streaming',

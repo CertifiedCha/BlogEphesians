@@ -99,10 +99,10 @@ export const MusicPlayer: React.FC = () => {
         fetchUserPlaylists();
       }
     }
-  }, [accessToken, activeTab]);
+  }, [accessToken, activeTab, userPlaylists.length, userSavedTracks.length]);
 
   async function fetchWebApi(endpoint: string, method: string, body?: any) {
-    const res = await fetch(`https://api.spotify.com/v1/$${endpoint}`, {
+    const res = await fetch(`https://api.spotify.com/v1/${endpoint}`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
@@ -110,21 +110,30 @@ export const MusicPlayer: React.FC = () => {
       method,
       body: body ? JSON.stringify(body) : undefined,
     });
-    if (res.status === 401) {
-      localStorage.removeItem('spotify_access_token');
-      setAccessToken(null);
-      toast.error('Session expired. Please reconnect.');
-      throw new Error('Session expired.');
+    
+    if (!res.ok) {
+      if (res.status === 401) {
+        localStorage.removeItem('spotify_access_token');
+        setAccessToken(null);
+        toast.error('Session expired. Please reconnect.');
+      }
+      const errorBody = await res.json().catch(() => ({}));
+      console.error('API Error:', res.status, errorBody);
+      throw new Error(`Spotify API error: ${res.statusText}`);
     }
-    return await res.json();
+
+    const data = await res.json().catch(() => null);
+    return data;
   }
 
   const fetchUserPlaylists = async () => {
     setLoadingContent(true);
     try {
       const response = await fetchWebApi('me/playlists?limit=10', 'GET');
-      setUserPlaylists(response.items);
-      if (response.items.length === 0) {
+      if (response && response.items) {
+        setUserPlaylists(response.items);
+      } else {
+        setUserPlaylists([]);
         toast.info('You have no playlists.');
       }
     } catch (e) {
@@ -138,7 +147,11 @@ export const MusicPlayer: React.FC = () => {
     setLoadingContent(true);
     try {
       const response = await fetchWebApi('me/tracks?limit=10', 'GET');
-      setUserSavedTracks(response.items.map((item: any) => item.track));
+      if (response && response.items) {
+        setUserSavedTracks(response.items.map((item: any) => item.track));
+      } else {
+        setUserSavedTracks([]);
+      }
       if (response.items.length === 0) {
         toast.info('You have no saved tracks.');
       }
@@ -194,8 +207,13 @@ export const MusicPlayer: React.FC = () => {
     setIsSearching(true);
     try {
       const response = await fetchWebApi(`search?q=${encodeURIComponent(query)}&type=track&limit=10`, 'GET');
-      setSearchResults(response.tracks.items);
-      toast.success(`Found ${response.tracks.items.length} tracks.`);
+      if (response && response.tracks && response.tracks.items) {
+        setSearchResults(response.tracks.items);
+        toast.success(`Found ${response.tracks.items.length} tracks.`);
+      } else {
+        setSearchResults([]);
+        toast.info('No tracks found for your search.');
+      }
     } catch (error) {
       console.error('Spotify search error:', error);
       toast.error('Failed to search tracks.');
@@ -212,15 +230,17 @@ export const MusicPlayer: React.FC = () => {
   };
 
   const handleTrackSelect = (track: SpotifyTrack) => {
-    setIframeUri(`https://open.spotify.com/embed/track/$${track.id}?utm_source=generator`);
+    setIframeUri(`https://open.spotify.com/embed/track/${track.id}?utm_source=generator`);
     setShowMainPanel(false);
     setIsMinimized(false);
+    toast.success(`Now playing: ${track.name} by ${track.artists[0].name}`);
   };
 
   const handlePlaylistSelect = (playlist: SpotifyPlaylist) => {
-    setIframeUri(`https://open.spotify.com/embed/playlist/$${playlist.id}?utm_source=generator`);
+    setIframeUri(`https://open.spotify.com/embed/playlist/${playlist.id}?utm_source=generator`);
     setShowMainPanel(false);
     setIsMinimized(false);
+    toast.success(`Now playing playlist: ${playlist.name}`);
   };
 
   const getAlbumImage = (item: SpotifyTrack | SpotifyPlaylist) => {

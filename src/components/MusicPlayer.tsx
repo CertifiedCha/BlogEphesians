@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Music, Search, X, RefreshCw } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
@@ -16,6 +16,12 @@ interface SpotifyTrack {
   };
 }
 
+// ⚠️ IMPORTANT: Replace with your actual Spotify Client ID and Redirect URI.
+// The Redirect URI MUST be an exact match to what's in your Spotify Dashboard.
+const CLIENT_ID = '83721f40f91c46bcae3379a3762f114e';
+const REDIRECT_URI = 'https://blogephesians.onrender.com'; // Or your deployed URL
+const SCOPES = 'user-top-read playlist-modify-private playlist-modify-public';
+
 export const MusicPlayer: React.FC = () => {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState(true);
@@ -25,20 +31,39 @@ export const MusicPlayer: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [playerPosition, setPlayerPosition] = useState({ x: 0, y: 0 });
 
-  // ⚠️ IMPORTANT: Replace with your actual Spotify Client ID and Redirect URI.
-  // The Redirect URI MUST be an exact match to what's in your Dashboard.
-  const CLIENT_ID = '83721f40f91c46bcae3379a3762f114e';
-  const REDIRECT_URI = 'https://blogephesians.onrender.com';
-  const SCOPES = 'user-top-read playlist-modify-private playlist-modify-public';
+  const containerRef = useRef<HTMLDivElement>(null);
 
-  // Handles redirect after authentication and exchanges code for token
+  // Helper function for PKCE
+  const generateRandomString = (length: number) => {
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const values = crypto.getRandomValues(new Uint8Array(length));
+    return values.map(x => possible[x % possible.length]).join('');
+  };
+  const sha256 = async (plain: string) => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(plain);
+    return window.crypto.subtle.digest('SHA-256', data);
+  };
+  const base64encode = (input: ArrayBuffer) => {
+    return btoa(String.fromCharCode(...new Uint8Array(input)))
+      .replace(/=/g, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_');
+  };
+
+  // Handles Spotify authentication redirect and token exchange
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
 
     if (code) {
       const codeVerifier = localStorage.getItem('code_verifier');
+      if (!codeVerifier) {
+        toast.error('Authentication error: code verifier not found.');
+        return;
+      }
 
       const getToken = async () => {
         try {
@@ -60,7 +85,7 @@ export const MusicPlayer: React.FC = () => {
             setAccessToken(data.access_token);
             localStorage.setItem('spotify_access_token', data.access_token);
             // Clean up the URL
-            window.history.pushState({}, document.title, REDIRECT_URI);
+            window.history.pushState({}, document.title, window.location.pathname);
           } else {
             toast.error('Failed to get access token.');
           }
@@ -76,8 +101,7 @@ export const MusicPlayer: React.FC = () => {
         setAccessToken(savedToken);
       }
     }
-  }, [CLIENT_ID, REDIRECT_URI]);
-
+  }, []);
 
   // Fetch top tracks and create a playlist when access token is available
   useEffect(() => {
@@ -86,10 +110,17 @@ export const MusicPlayer: React.FC = () => {
     }
   }, [accessToken]);
 
+  // Handle drag end to update player position
+  const handleDragEnd = (_: any, info: any) => {
+    setPlayerPosition({ x: info.point.x, y: info.point.y });
+  };
+  
+  // API call helper
   async function fetchWebApi(endpoint: string, method: string, body?: any) {
     const res = await fetch(`https://api.spotify.com/v1/${endpoint}`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
       },
       method,
       body: body ? JSON.stringify(body) : undefined,
@@ -103,10 +134,12 @@ export const MusicPlayer: React.FC = () => {
     return await res.json();
   }
 
+  // Gets user's top tracks
   async function getTopTracks(): Promise<SpotifyTrack[]> {
     return (await fetchWebApi('me/top/tracks?time_range=long_term&limit=5', 'GET')).items;
   }
 
+  // Creates a playlist with top tracks
   async function createPlaylist(tracksUri: string[]): Promise<string> {
     const { id: user_id } = await fetchWebApi('me', 'GET');
     const playlist = await fetchWebApi(
@@ -117,12 +150,14 @@ export const MusicPlayer: React.FC = () => {
       });
     
     await fetchWebApi(
-      `playlists/${playlist.id}/tracks?uris=${tracksUri.join(',')}`,
-      'POST'
+      `playlists/${playlist.id}/tracks`,
+      'POST',
+      { "uris": tracksUri }
     );
     return playlist.id;
   }
 
+  // Main function to fetch tracks and create a playlist
   async function handleGetTopTracksAndCreatePlaylist() {
     if (!accessToken) return;
     setLoadingContent(true);
@@ -140,10 +175,8 @@ export const MusicPlayer: React.FC = () => {
             const tracksUri = topTracks.map(track => `spotify:track:${track.id}`);
             const playlistId = await createPlaylist(tracksUri);
             
-            setTimeout(() => {
-              setIframeUri(`https://open.spotify.com/embed/playlist/${playlistId}?utm_source=generator`);
-              resolve(null);
-            }, 2000);
+            setIframeUri(`https://open.spotify.com/embed/playlist/${playlistId}?utm_source=generator`);
+            resolve(null);
           } catch (e) {
             reject(e);
           }
@@ -161,31 +194,11 @@ export const MusicPlayer: React.FC = () => {
     }
   }
   
+  // Initiates the Spotify authentication flow
   const connectToSpotify = async () => {
-    // PKCE helper functions
-    const generateRandomString = (length: number) => {
-      const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-      const values = crypto.getRandomValues(new Uint8Array(length));
-      return values.map(x => possible[x % possible.length]).join('');
-    };
-
-    const sha256 = async (plain: string) => {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(plain);
-      return window.crypto.subtle.digest('SHA-256', data);
-    };
-
-    const base64encode = (input: ArrayBuffer) => {
-      return btoa(String.fromCharCode(...new Uint8Array(input)))
-        .replace(/=/g, '')
-        .replace(/\+/g, '-')
-        .replace(/\//g, '_');
-    };
-
     const codeVerifier = generateRandomString(128);
     const hashed = await sha256(codeVerifier);
     const codeChallenge = base64encode(hashed);
-
     localStorage.setItem('code_verifier', codeVerifier);
 
     const authUrl = new URL('https://accounts.spotify.com/authorize');
@@ -201,6 +214,7 @@ export const MusicPlayer: React.FC = () => {
     window.location.href = authUrl.toString();
   };
 
+  // Search for tracks on Spotify
   const searchSpotifyTracks = async (query: string): Promise<void> => {
     if (!accessToken) {
       toast.error('Please connect to Spotify first.');
@@ -269,7 +283,10 @@ export const MusicPlayer: React.FC = () => {
   }
 
   return (
-    <div className="fixed bottom-4 left-4 z-50">
+    <div 
+      className="fixed bottom-4 right-4 z-50" 
+      ref={containerRef}
+    >
       <AnimatePresence>
         {isMinimized ? (
           <motion.div
@@ -278,6 +295,11 @@ export const MusicPlayer: React.FC = () => {
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0, opacity: 0 }}
             transition={{ type: "spring", duration: 0.5 }}
+            drag
+            dragConstraints={containerRef}
+            onDragEnd={handleDragEnd}
+            dragElastic={0.2}
+            style={{ position: 'absolute', bottom: 0, right: 0 }}
           >
             <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
               <Button
@@ -297,10 +319,15 @@ export const MusicPlayer: React.FC = () => {
             exit={{ y: 200, opacity: 0 }}
             transition={{ type: "spring", stiffness: 100, damping: 20 }}
             className="w-80"
+            drag
+            dragConstraints={containerRef}
+            onDragEnd={handleDragEnd}
+            dragElastic={0.2}
+            style={{ position: 'absolute', bottom: 0, right: 0 }}
           >
             <Card className="bg-gray-900 backdrop-blur-lg border-gray-700 shadow-2xl overflow-hidden">
               <CardContent className="p-0">
-                <div className="flex items-center justify-between p-3 bg-gradient-to-r from-green-600 to-green-500 text-black">
+                <div className="flex items-center justify-between p-3 bg-gradient-to-r from-green-600 to-green-500 text-black cursor-grab active:cursor-grabbing">
                   <div className="flex items-center space-x-2">
                     <Music className="w-4 h-4" />
                     <h3 className="text-sm font-bold">Spotify Player</h3>
@@ -384,7 +411,7 @@ export const MusicPlayer: React.FC = () => {
                   iframeUri && (
                     <motion.div key={iframeUri} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.5 }} className="w-full h-80">
                       <iframe
-                        title="Spotify Embed: Recommendation Playlist"
+                        title="Spotify Embed"
                         src={iframeUri}
                         width="100%"
                         height="100%"
@@ -395,8 +422,8 @@ export const MusicPlayer: React.FC = () => {
                     </motion.div>
                   )
                 )}
-
-                {!iframeUri && !loadingContent && (
+                
+                {!iframeUri && !loadingContent && !showSearch && (
                   <div className="p-4 text-center">
                     <p className="text-gray-400 text-sm">
                       No playlist loaded. Search for a song to play or reconnect.

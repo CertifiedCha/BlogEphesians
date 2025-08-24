@@ -352,127 +352,128 @@ export const MusicPlayer: React.FC = () => {
     );
   }
 
-  return (
-    <DraggableCore nodeRef={componentRef} handle=".drag-handle" onDrag={handleDrag}>
-      <motion.div
-        ref={componentRef}
-        className="fixed bottom-4 left-4 z-50"
-        style={{ x: position.x, y: position.y }}
-        initial={{ scale: 0, opacity: 0 }}
-        animate={{ scale: 1, opacity: 1 }}
-        transition={{ type: "spring", duration: 0.5 }}
-      >
-        <AnimatePresence>
-          {isMinimized ? (
-            <motion.div
-              key="minimized-button"
-              initial={{ scale: 0, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0, opacity: 0 }}
-              transition={{ type: "spring", duration: 0.5 }}
-            >
-              <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                <Button
-                  onClick={() => setIsMinimized(false)}
-                  className="w-14 h-14 rounded-full bg-green-500 hover:bg-green-600 shadow-2xl text-black"
-                  aria-label="Open Spotify Player"
-                >
-                  <Music className="w-6 h-6" />
-                </Button>
-              </motion.div>
-            </motion.div>
-          ) : (
-            <motion.div
-              key="full-player"
-              initial={{ y: 200, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              exit={{ y: 200, opacity: 0 }}
-              transition={{ type: "spring", stiffness: 100, damping: 20 }}
-              className="w-80"
-            >
-              <Card className="bg-gray-900 backdrop-blur-lg border-gray-700 shadow-2xl overflow-hidden">
-                <CardContent className="p-0">
-                  <div ref={dragHandleRef} className="drag-handle cursor-grab active:cursor-grabbing flex items-center justify-between p-3 bg-gradient-to-r from-green-600 to-green-500 text-black">
-                    <div className="flex items-center space-x-2">
-                      <Music className="w-4 h-4" />
-                      <h3 className="text-sm font-bold">Spotify Player</h3>
-                    </div>
-                    <div className="flex items-center space-x-1">
-                      <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setShowMainPanel(!showMainPanel)}
-                          className="w-6 h-6 text-black hover:text-black/80 p-0 hover:bg-white/20"
-                          aria-label="Toggle Main Panel"
-                        >
-                          {showMainPanel ? <X className="w-4 h-4" /> : <ListMusic className="w-4 h-4" />}
-                        </Button>
-                      </motion.div>
-                      <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setIsMinimized(true)}
-                          className="w-6 h-6 text-black hover:text-black/80 p-0 hover:bg-white/20"
-                          aria-label="Minimize Spotify Player"
-                        >
-                          <X className="w-4 h-4" />
-                        </Button>
-                      </motion.div>
-                    </div>
-                  </div>
+  // ... (rest of the component code)
 
-                  <AnimatePresence>
-                    {showMainPanel && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: "auto", opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        transition={{ duration: 0.3 }}
-                        className="border-b border-gray-700"
-                      >
-                        <div className="flex justify-around bg-gray-800 border-b border-gray-700">
-                          <Button variant="ghost" className={`flex-1 rounded-none ${activeTab === 'search' ? 'border-b-2 border-green-500 text-white' : 'text-gray-400'}`} onClick={() => setActiveTab('search')}>
-                            <Search className="w-4 h-4 mr-2" /> Search
-                          </Button>
-                          <Button variant="ghost" className={`flex-1 rounded-none ${activeTab === 'playlists' ? 'border-b-2 border-green-500 text-white' : 'text-gray-400'}`} onClick={() => setActiveTab('playlists')}>
-                            <ListMusic className="w-4 h-4 mr-2" /> Playlists
-                          </Button>
-                          <Button variant="ghost" className={`flex-1 rounded-none ${activeTab === 'library' ? 'border-b-2 border-green-500 text-white' : 'text-gray-400'}`} onClick={() => setActiveTab('library')}>
-                            <Library className="w-4 h-4 mr-2" /> Library
-                          </Button>
-                        </div>
-                        {renderContent()}
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+  return (
+    <Draggable handle=".drag-handle">
+      <motion.div
+        ref={componentRef}
+        className="fixed bottom-4 left-4 z-50"
+        initial={{ scale: 0, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: "spring", duration: 0.5 }}
+      >
+        <AnimatePresence>
+          {isMinimized ? (
+            <motion.div
+              key="minimized-button"
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0, opacity: 0 }}
+              transition={{ type: "spring", duration: 0.5 }}
+            >
+              <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
+                <Button
+                  onClick={() => setIsMinimized(false)}
+                  className="w-14 h-14 rounded-full bg-green-500 hover:bg-green-600 shadow-2xl text-black"
+                  aria-label="Open Spotify Player"
+                >
+                  <Music className="w-6 h-6" />
+                </Button>
+              </motion.div>
+            </motion.div>
+          ) : (
+            <motion.div
+              key="full-player"
+              initial={{ y: 200, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 200, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 100, damping: 20 }}
+              className="w-80"
+            >
+              <Card className="bg-gray-900 backdrop-blur-lg border-gray-700 shadow-2xl overflow-hidden">
+                <CardContent className="p-0">
+                  <div ref={dragHandleRef} className="drag-handle cursor-grab active:cursor-grabbing flex items-center justify-between p-3 bg-gradient-to-r from-green-600 to-green-500 text-black">
+                    <div className="flex items-center space-x-2">
+                      <Music className="w-4 h-4" />
+                      <h3 className="text-sm font-bold">Spotify Player</h3>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowMainPanel(!showMainPanel)}
+                          className="w-6 h-6 text-black hover:text-black/80 p-0 hover:bg-white/20"
+                          aria-label="Toggle Main Panel"
+                        >
+                          {showMainPanel ? <X className="w-4 h-4" /> : <ListMusic className="w-4 h-4" />}
+                        </Button>
+                      </motion.div>
+                      <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setIsMinimized(true)}
+                          className="w-6 h-6 text-black hover:text-black/80 p-0 hover:bg-white/20"
+                          aria-label="Minimize Spotify Player"
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </motion.div>
+                    </div>
+                  </div>
 
-                  {iframeUri ? (
-                    <motion.div key={iframeUri} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.5 }} className="w-full h-80">
-                      <iframe
-                        title="Spotify Embed: Recommendation Playlist"
-                        src={iframeUri}
-                        width="100%"
-                        height="100%"
-                        style={{ minHeight: '320px', border: 'none' }}
-                        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                        loading="lazy"
-                      />
-                    </motion.div>
-                  ) : (
-                    <div className="p-4 text-center">
-                      <p className="text-gray-400 text-sm">
-                        No playlist or track loaded. Search or select a song to start.
-                      </p>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </motion.div>
-    </DraggableCore>
-  );
+                  <AnimatePresence>
+                    {showMainPanel && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.3 }}
+                        className="border-b border-gray-700"
+                      >
+                        <div className="flex justify-around bg-gray-800 border-b border-gray-700">
+                          <Button variant="ghost" className={`flex-1 rounded-none ${activeTab === 'search' ? 'border-b-2 border-green-500 text-white' : 'text-gray-400'}`} onClick={() => setActiveTab('search')}>
+                            <Search className="w-4 h-4 mr-2" /> Search
+                          </Button>
+                          <Button variant="ghost" className={`flex-1 rounded-none ${activeTab === 'playlists' ? 'border-b-2 border-green-500 text-white' : 'text-gray-400'}`} onClick={() => setActiveTab('playlists')}>
+                            <ListMusic className="w-4 h-4 mr-2" /> Playlists
+                          </Button>
+                          <Button variant="ghost" className={`flex-1 rounded-none ${activeTab === 'library' ? 'border-b-2 border-green-500 text-white' : 'text-gray-400'}`} onClick={() => setActiveTab('library')}>
+                            <Library className="w-4 h-4 mr-2" /> Library
+                          </Button>
+                        </div>
+                        {renderContent()}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+
+                  {iframeUri ? (
+                    <motion.div key={iframeUri} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.5 }} className="w-full h-80">
+                      <iframe
+                        title="Spotify Embed: Recommendation Playlist"
+                        src={iframeUri}
+                        width="100%"
+                        height="100%"
+                        style={{ minHeight: '320px', border: 'none' }}
+                        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                        loading="lazy"
+                      />
+                    </motion.div>
+                  ) : (
+                    <div className="p-4 text-center">
+                      <p className="text-gray-400 text-sm">
+                        No playlist or track loaded. Search or select a song to start.
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    </Draggable>
+  );
 };

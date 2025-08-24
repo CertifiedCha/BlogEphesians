@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { Search, Music, ExternalLink, RefreshCw } from 'lucide-react';
+import { Search, Music, ExternalLink, RefreshCw, Star, Heart } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
-import { motion, AnimatePresence } from 'framer-motion'; // Replaced 'motion/react' with 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
-import { DolphinSpinner } from './LoadingScreen'; // Assuming this is a custom spinner component
 
 interface SpotifyTrack {
   id: string;
@@ -27,7 +26,6 @@ interface SpotifySearchResponse {
 
 export const MusicPlayer: React.FC = () => {
   const [currentTrack, setCurrentTrack] = useState<SpotifyTrack | null>(null);
-  const [tracks, setTracks] = useState<SpotifyTrack[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
   const [isSearching, setIsSearching] = useState(false);
@@ -36,11 +34,12 @@ export const MusicPlayer: React.FC = () => {
   const [isConnecting, setIsConnecting] = useState(false);
   const [iframeUri, setIframeUri] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState(false);
-
-  // Spotify API configuration
-  const CLIENT_ID = 'YOUR_SPOTIFY_CLIENT_ID'; // ⚠️ IMPORTANT: Replace with your actual Client ID
-  const REDIRECT_URI = window.location.origin;
-  const SCOPES = 'user-read-private user-read-email';
+  const [loadingPlaylist, setLoadingPlaylist] = useState(false);
+  
+  // ⚠️ IMPORTANT: Replace with your actual Spotify Client ID and Redirect URI
+  const CLIENT_ID = '83721f40f91c46bcae3379a3762f114e';
+  const REDIRECT_URI = 'https://blogephesians.onrender.com/'; // Or your website's URL
+  const SCOPES = 'user-read-private user-read-email user-top-read playlist-modify-private playlist-modify-public';
 
   // Handles Spotify authentication after redirect
   useEffect(() => {
@@ -49,7 +48,7 @@ export const MusicPlayer: React.FC = () => {
       const token = hash.split('&').find(s => s.startsWith('access_token'))?.split('=')[1];
       if (token) {
         setAccessToken(token);
-        window.location.hash = ''; // Clear hash from URL for cleaner look
+        window.location.hash = '';
         localStorage.setItem('spotify_access_token', token);
         toast.success('Successfully connected to Spotify!');
       }
@@ -61,12 +60,88 @@ export const MusicPlayer: React.FC = () => {
     }
   }, []);
 
-  // Fetch initial popular tracks on component mount if an access token exists
+  // Fetch top tracks and create a playlist when access token is available
   useEffect(() => {
     if (accessToken) {
-      searchSpotifyTracks('top hits 2024');
+      handleGetTopTracksAndCreatePlaylist();
     }
   }, [accessToken]);
+
+  async function fetchWebApi(endpoint: string, method: string, body?: any) {
+    const res = await fetch(`https://api.spotify.com/${endpoint}`, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      method,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    if (res.status === 401) {
+      localStorage.removeItem('spotify_access_token');
+      setAccessToken(null);
+      throw new Error('Session expired. Please reconnect.');
+    }
+    return await res.json();
+  }
+
+  async function getTopTracks(): Promise<SpotifyTrack[]> {
+    return (await fetchWebApi('v1/me/top/tracks?time_range=long_term&limit=5', 'GET')).items;
+  }
+
+  async function createPlaylist(tracksUri: string[]): Promise<string> {
+    const { id: user_id } = await fetchWebApi('v1/me', 'GET');
+    const playlist = await fetchWebApi(
+      `v1/users/${user_id}/playlists`, 'POST', {
+        "name": "My Top Tracks",
+        "description": "Playlist of my all-time top tracks, created automatically.",
+        "public": false
+      });
+    
+    await fetchWebApi(
+      `v1/playlists/${playlist.id}/tracks?uris=${tracksUri.join(',')}`,
+      'POST'
+    );
+    return playlist.id;
+  }
+
+  async function handleGetTopTracksAndCreatePlaylist() {
+    if (!accessToken) return;
+    setLoadingPlaylist(true);
+    try {
+      toast.promise(
+        new Promise(async (resolve, reject) => {
+          try {
+            const topTracks = await getTopTracks();
+            if (topTracks.length === 0) {
+              setLoadingPlaylist(false);
+              setIframeUri(null); // No tracks to play
+              toast.info('No top tracks found for your account.');
+              resolve(null);
+              return;
+            }
+            const tracksUri = topTracks.map(track => `spotify:track:${track.id}`);
+            const playlistId = await createPlaylist(tracksUri);
+            
+            // Wait for a moment to ensure the playlist is fully updated by Spotify
+            setTimeout(() => {
+              setIframeUri(`https://open.spotify.com/embed/playlist/1kdvLmZfojTrBqP1YAfQxf?utm_source=generator&theme=0{playlistId}?utm_source=generator`);
+              setLoadingPlaylist(false);
+              resolve(null);
+            }, 2000);
+
+          } catch (e) {
+            reject(e);
+          }
+        }),
+        {
+          loading: 'Fetching top tracks and creating a playlist...',
+          success: 'Your personal playlist is ready!',
+          error: (err) => `Failed to create playlist: ${err.message}`,
+        }
+      );
+    } catch (e) {
+      // Handled by toast.promise
+    }
+  }
 
   const connectToSpotify = () => {
     setIsConnecting(true);
@@ -79,38 +154,11 @@ export const MusicPlayer: React.FC = () => {
       toast.error('Please connect to Spotify first.');
       return;
     }
-
     setIsSearching(true);
     try {
-      const response = await fetch(
-        `https://api.spotify.com/v1/search?q=${encodeURIComponent(query)}&type=track&limit=20`,
-        {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`
-          }
-        }
-      );
-
-      if (response.status === 401) {
-        localStorage.removeItem('spotify_access_token');
-        setAccessToken(null);
-        toast.error('Session expired. Please reconnect to Spotify.');
-        return;
-      }
-
-      if (!response.ok) {
-        throw new Error('Failed to search tracks.');
-      }
-
-      const data: SpotifySearchResponse = await response.json();
-      setSearchResults(data.tracks.items);
-      
-      // If no track is currently playing, select the first one from the search results
-      if (!currentTrack && data.tracks.items.length > 0) {
-        handleTrackSelect(data.tracks.items[0]);
-      }
-      
-      toast.success(`Found ${data.tracks.items.length} tracks.`);
+      const response = await fetchWebApi(`v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, 'GET');
+      setSearchResults(response.tracks.items);
+      toast.success(`Found ${response.tracks.items.length} tracks.`);
     } catch (error) {
       console.error('Spotify search error:', error);
       toast.error('Failed to search tracks.');
@@ -127,7 +175,6 @@ export const MusicPlayer: React.FC = () => {
 
   const handleTrackSelect = (track: SpotifyTrack) => {
     setCurrentTrack(track);
-    // Use the track's ID to construct the Spotify embed URI
     setIframeUri(`https://open.spotify.com/embed/track/${track.id}?utm_source=generator`);
     setShowSearch(false);
     toast.success(`Now playing: ${track.name} by ${track.artists[0].name}`);
@@ -157,7 +204,7 @@ export const MusicPlayer: React.FC = () => {
               <div>
                 <h3 className="text-white font-medium mb-2">Connect to Spotify</h3>
                 <p className="text-gray-400 text-sm mb-4">
-                  Log in to get full playback and access to your playlists.
+                  Log in to get full playback and access to your personal music.
                 </p>
               </div>
               <Button
@@ -166,7 +213,9 @@ export const MusicPlayer: React.FC = () => {
                 className="w-full bg-green-500 hover:bg-green-600 text-black font-medium"
               >
                 {isConnecting ? (
-                  <DolphinSpinner size={16} />
+                  <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}>
+                    <RefreshCw className="w-4 h-4" />
+                  </motion.div>
                 ) : (
                   <>
                     <Music className="mr-2 w-4 h-4" />
@@ -211,7 +260,6 @@ export const MusicPlayer: React.FC = () => {
     >
       <Card className="bg-gray-900 backdrop-blur-lg border-gray-700 shadow-2xl overflow-hidden">
         <CardContent className="p-0">
-          {/* Spotify Header */}
           <div className="flex items-center justify-between p-3 bg-gradient-to-r from-green-600 to-green-500 text-black">
             <div className="flex items-center space-x-2">
               <Music className="w-4 h-4" />
@@ -266,7 +314,13 @@ export const MusicPlayer: React.FC = () => {
                       disabled={isSearching || !searchQuery.trim()}
                       className="bg-green-600 hover:bg-green-700 text-black"
                     >
-                      {isSearching ? <DolphinSpinner size={16} /> : <Search className="w-4 h-4" />}
+                      {isSearching ? (
+                        <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}>
+                          <RefreshCw className="w-4 h-4" />
+                        </motion.div>
+                      ) : (
+                        <Search className="w-4 h-4" />
+                      )}
                     </Button>
                   </div>
                   
@@ -311,32 +365,39 @@ export const MusicPlayer: React.FC = () => {
             )}
           </AnimatePresence>
           
-          {/* Main Iframe Player */}
-          {iframeUri && (
-            <motion.div 
-              key={iframeUri}
-              initial={{ opacity: 0, scale: 0.9 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.5 }}
-              className="w-full h-80"
-            >
-              <iframe
-                title="Spotify Embed Player"
-                src={iframeUri}
-                width="100%"
-                height="100%"
-                style={{ minHeight: '320px', border: 'none' }}
-                allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                loading="lazy"
-              />
-            </motion.div>
+          {loadingPlaylist ? (
+            <div className="flex flex-col items-center justify-center p-8 space-y-4 text-center">
+              <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}>
+                <RefreshCw className="w-8 h-8 text-green-400" />
+              </motion.div>
+              <p className="text-gray-400">Creating your personal playlist...</p>
+            </div>
+          ) : (
+            iframeUri && (
+              <motion.div 
+                key={iframeUri}
+                initial={{ opacity: 0, scale: 0.9 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.5 }}
+                className="w-full h-80"
+              >
+                <iframe
+                  title="Spotify Embed Player"
+                  src={iframeUri}
+                  width="100%"
+                  height="100%"
+                  style={{ minHeight: '320px', border: 'none' }}
+                  allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                  loading="lazy"
+                />
+              </motion.div>
+            )
           )}
 
-          {/* Fallback Message */}
-          {!iframeUri && (
+          {!iframeUri && !loadingPlaylist && (
             <div className="p-4 text-center">
               <p className="text-gray-400 text-sm">
-                Search for a song to begin playing!
+                No playlist loaded. Search for a song or connect to fetch your top tracks.
               </p>
             </div>
           )}

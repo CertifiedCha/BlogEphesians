@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Music, Search, X, RefreshCw } from 'lucide-react';
+import { Music, Search, X, RefreshCw, Library, ListMusic } from 'lucide-react';
 import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
+import { DraggableCore } from 'react-draggable-core'; // You need to install this library
 
 interface SpotifyTrack {
   id: string;
@@ -16,55 +17,38 @@ interface SpotifyTrack {
   };
 }
 
-// ⚠️ IMPORTANT: Replace with your actual Spotify Client ID and Redirect URI.
-// The Redirect URI MUST be an exact match to what's in your Spotify Dashboard.
-const CLIENT_ID = '83721f40f91c46bcae3379a3762f114e';
-const REDIRECT_URI = 'https://blogephesians.onrender.com'; // Or your deployed URL
-const SCOPES = 'user-top-read playlist-modify-private playlist-modify-public';
+interface SpotifyPlaylist {
+  id: string;
+  name: string;
+  images: { url: string; width: number; height: number }[];
+}
 
 export const MusicPlayer: React.FC = () => {
   const [accessToken, setAccessToken] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState(true);
   const [loadingContent, setLoadingContent] = useState(false);
   const [iframeUri, setIframeUri] = useState<string | null>(null);
-  const [showSearch, setShowSearch] = useState(false);
+  const [showMainPanel, setShowMainPanel] = useState(false);
+  const [activeTab, setActiveTab] = useState('search'); // 'search', 'playlists', 'library'
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<SpotifyTrack[]>([]);
   const [isSearching, setIsSearching] = useState(false);
-  const [playerPosition, setPlayerPosition] = useState({ x: 0, y: 0 });
+  const [userPlaylists, setUserPlaylists] = useState<SpotifyPlaylist[]>([]);
+  const [userSavedTracks, setUserSavedTracks] = useState<SpotifyTrack[]>([]);
 
-  const containerRef = useRef<HTMLDivElement>(null);
+  const componentRef = useRef<HTMLDivElement>(null);
+  const dragHandleRef = useRef<HTMLDivElement>(null);
 
-  // Helper function for PKCE
-  const generateRandomString = (length: number) => {
-    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    const values = crypto.getRandomValues(new Uint8Array(length));
-    return values.map(x => possible[x % possible.length]).join('');
-  };
-  const sha256 = async (plain: string) => {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(plain);
-    return window.crypto.subtle.digest('SHA-256', data);
-  };
-  const base64encode = (input: ArrayBuffer) => {
-    return btoa(String.fromCharCode(...new Uint8Array(input)))
-      .replace(/=/g, '')
-      .replace(/\+/g, '-')
-      .replace(/\//g, '_');
-  };
+  const CLIENT_ID = '83721f40f91c46bcae3379a3762f114e';
+  const REDIRECT_URI = 'https://blogephesians.onrender.com';
+  const SCOPES = 'user-top-read playlist-modify-private playlist-modify-public user-library-read playlist-read-private';
 
-  // Handles Spotify authentication redirect and token exchange
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const code = urlParams.get('code');
 
     if (code) {
       const codeVerifier = localStorage.getItem('code_verifier');
-      if (!codeVerifier) {
-        toast.error('Authentication error: code verifier not found.');
-        return;
-      }
-
       const getToken = async () => {
         try {
           const response = await fetch('https://accounts.spotify.com/api/token', {
@@ -84,8 +68,8 @@ export const MusicPlayer: React.FC = () => {
           if (data.access_token) {
             setAccessToken(data.access_token);
             localStorage.setItem('spotify_access_token', data.access_token);
-            // Clean up the URL
-            window.history.pushState({}, document.title, window.location.pathname);
+            window.history.pushState({}, document.title, REDIRECT_URI);
+            toast.success('Successfully connected to Spotify!');
           } else {
             toast.error('Failed to get access token.');
           }
@@ -103,21 +87,18 @@ export const MusicPlayer: React.FC = () => {
     }
   }, []);
 
-  // Fetch top tracks and create a playlist when access token is available
   useEffect(() => {
     if (accessToken) {
-      handleGetTopTracksAndCreatePlaylist();
+      if (activeTab === 'library' && userSavedTracks.length === 0) {
+        fetchUserSavedTracks();
+      } else if (activeTab === 'playlists' && userPlaylists.length === 0) {
+        fetchUserPlaylists();
+      }
     }
-  }, [accessToken]);
+  }, [accessToken, activeTab]);
 
-  // Handle drag end to update player position
-  const handleDragEnd = (_: any, info: any) => {
-    setPlayerPosition({ x: info.point.x, y: info.point.y });
-  };
-  
-  // API call helper
-  async function fetchWebApi(endpoint: string, method: string, body?: any) {
-    const res = await fetch(`https://api.spotify.com/v1/${endpoint}`, {
+  const fetchWebApi = async (endpoint: string, method: string, body?: any) => {
+    const res = await fetch(`https://api.spotify.com/v1/$${endpoint}`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
@@ -132,70 +113,56 @@ export const MusicPlayer: React.FC = () => {
       throw new Error('Session expired.');
     }
     return await res.json();
-  }
+  };
 
-  // Gets user's top tracks
-  async function getTopTracks(): Promise<SpotifyTrack[]> {
-    return (await fetchWebApi('me/top/tracks?time_range=long_term&limit=5', 'GET')).items;
-  }
-
-  // Creates a playlist with top tracks
-  async function createPlaylist(tracksUri: string[]): Promise<string> {
-    const { id: user_id } = await fetchWebApi('me', 'GET');
-    const playlist = await fetchWebApi(
-      `users/${user_id}/playlists`, 'POST', {
-        "name": "My Top Tracks",
-        "description": "Playlist of my all-time top tracks, created automatically.",
-        "public": false
-      });
-    
-    await fetchWebApi(
-      `playlists/${playlist.id}/tracks`,
-      'POST',
-      { "uris": tracksUri }
-    );
-    return playlist.id;
-  }
-
-  // Main function to fetch tracks and create a playlist
-  async function handleGetTopTracksAndCreatePlaylist() {
-    if (!accessToken) return;
+  const fetchUserPlaylists = async () => {
     setLoadingContent(true);
     try {
-      toast.promise(
-        new Promise(async (resolve, reject) => {
-          try {
-            const topTracks = await getTopTracks();
-            if (topTracks.length === 0) {
-              setIframeUri(null);
-              toast.info('No top tracks found for your account.');
-              resolve(null);
-              return;
-            }
-            const tracksUri = topTracks.map(track => `spotify:track:${track.id}`);
-            const playlistId = await createPlaylist(tracksUri);
-            
-            setIframeUri(`https://open.spotify.com/embed/playlist/${playlistId}?utm_source=generator`);
-            resolve(null);
-          } catch (e) {
-            reject(e);
-          }
-        }),
-        {
-          loading: 'Fetching top tracks and creating a playlist...',
-          success: 'Your personal playlist is ready!',
-          error: (err) => `Failed to create playlist: ${err.message}`,
-        }
-      );
+      const response = await fetchWebApi('me/playlists?limit=10', 'GET');
+      setUserPlaylists(response.items);
+      if (response.items.length === 0) {
+        toast.info('You have no playlists.');
+      }
     } catch (e) {
-      // Handled by toast.promise
+      toast.error('Failed to load playlists.');
     } finally {
       setLoadingContent(false);
     }
-  }
-  
-  // Initiates the Spotify authentication flow
+  };
+
+  const fetchUserSavedTracks = async () => {
+    setLoadingContent(true);
+    try {
+      const response = await fetchWebApi('me/tracks?limit=10', 'GET');
+      setUserSavedTracks(response.items.map((item: any) => item.track));
+      if (response.items.length === 0) {
+        toast.info('You have no saved tracks.');
+      }
+    } catch (e) {
+      toast.error('Failed to load saved tracks.');
+    } finally {
+      setLoadingContent(false);
+    }
+  };
+
   const connectToSpotify = async () => {
+    const generateRandomString = (length: number) => {
+      const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      const values = crypto.getRandomValues(new Uint8Array(length));
+      return values.map(x => possible[x % possible.length]).join('');
+    };
+    const sha256 = async (plain: string) => {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(plain);
+      return window.crypto.subtle.digest('SHA-256', data);
+    };
+    const base64encode = (input: ArrayBuffer) => {
+      return btoa(String.fromCharCode(...new Uint8Array(input)))
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_');
+    };
+
     const codeVerifier = generateRandomString(128);
     const hashed = await sha256(codeVerifier);
     const codeChallenge = base64encode(hashed);
@@ -214,7 +181,6 @@ export const MusicPlayer: React.FC = () => {
     window.location.href = authUrl.toString();
   };
 
-  // Search for tracks on Spotify
   const searchSpotifyTracks = async (query: string): Promise<void> => {
     if (!accessToken) {
       toast.error('Please connect to Spotify first.');
@@ -240,16 +206,120 @@ export const MusicPlayer: React.FC = () => {
     }
   };
 
-  const handleTrackSelect = (track: SpotifyTrack) => {
-    setIframeUri(`https://open.spotify.com/embed/track/${track.id}?utm_source=generator`);
-    setShowSearch(false);
-    toast.success(`Now playing: ${track.name} by ${track.artists[0].name}`);
+  const handleTrackSelect = (trackId: string) => {
+    setIframeUri(`https://open.spotify.com/embed/track/$${trackId}?utm_source=generator`);
+    setShowMainPanel(false);
+    setIsMinimized(false);
   };
 
-  const getAlbumImage = (track: SpotifyTrack) => {
-    return track.album.images.find(img => img.width >= 64)?.url ||
-      track.album.images[0]?.url ||
-      'https://via.placeholder.com/64x64/1ed760/000000?text=♪';
+  const handlePlaylistSelect = (playlistId: string) => {
+    setIframeUri(`https://open.spotify.com/embed/playlist/$${playlistId}?utm_source=generator`);
+    setShowMainPanel(false);
+    setIsMinimized(false);
+  };
+
+  const getAlbumImage = (item: SpotifyTrack | SpotifyPlaylist) => {
+    return item.images.find(img => img.width >= 64)?.url || item.images[0]?.url || 'https://via.placeholder.com/64x64/1ed760/000000?text=♪';
+  };
+
+  // Draggable state management
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const handleDrag = (e: any, ui: any) => {
+    const { deltaX, deltaY } = ui;
+    setPosition(prevPosition => ({
+      x: prevPosition.x + deltaX,
+      y: prevPosition.y + deltaY,
+    }));
+  };
+
+  const renderContent = () => {
+    switch (activeTab) {
+      case 'search':
+        return (
+          <>
+            <div className="flex space-x-2 p-4">
+              <Input
+                type="text"
+                placeholder="Search songs..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                className="flex-1 bg-gray-800 border-gray-600 text-white placeholder:text-gray-500"
+                disabled={isSearching}
+              />
+              <Button onClick={handleSearch} disabled={isSearching || !searchQuery.trim()} className="bg-green-600 hover:bg-green-700 text-black">
+                {isSearching ? <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}><RefreshCw className="w-4 h-4" /></motion.div> : <Search className="w-4 h-4" />}
+              </Button>
+            </div>
+            {searchResults.length > 0 && (
+              <div className="max-h-52 overflow-y-auto space-y-1 p-4 pt-0">
+                {searchResults.map((track) => (
+                  <motion.button key={track.id} onClick={() => handleTrackSelect(track.id)} className="w-full text-left p-2 rounded text-xs hover:bg-gray-700 transition-colors text-white" whileHover={{ scale: 1.02, x: 4 }} whileTap={{ scale: 0.98 }}>
+                    <div className="flex items-center space-x-2">
+                      <img src={getAlbumImage(track)} alt={track.album.name} className="w-10 h-10 rounded" />
+                      <div className="flex-1 min-w-0">
+                        <div className="truncate font-medium">{track.name}</div>
+                        <div className="text-xs opacity-70 truncate">{track.artists[0].name}</div>
+                      </div>
+                    </div>
+                  </motion.button>
+                ))}
+              </div>
+            )}
+          </>
+        );
+      case 'playlists':
+        return (
+          <div className="max-h-64 overflow-y-auto space-y-2 p-4 pt-0">
+            {loadingContent ? (
+              <div className="flex flex-col items-center justify-center py-8 space-y-2 text-center">
+                <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}><RefreshCw className="w-6 h-6 text-green-400" /></motion.div>
+                <p className="text-gray-400 text-sm">Loading playlists...</p>
+              </div>
+            ) : userPlaylists.length > 0 ? (
+              userPlaylists.map((playlist) => (
+                <motion.button key={playlist.id} onClick={() => handlePlaylistSelect(playlist.id)} className="w-full text-left p-2 rounded text-xs hover:bg-gray-700 transition-colors text-white" whileHover={{ scale: 1.02, x: 4 }} whileTap={{ scale: 0.98 }}>
+                  <div className="flex items-center space-x-2">
+                    <img src={getAlbumImage(playlist)} alt={playlist.name} className="w-10 h-10 rounded" />
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate font-medium">{playlist.name}</div>
+                    </div>
+                  </div>
+                </motion.button>
+              ))
+            ) : (
+              <div className="text-center py-8 text-gray-400 text-sm">No playlists found.</div>
+            )}
+          </div>
+        );
+      case 'library':
+        return (
+          <div className="max-h-64 overflow-y-auto space-y-2 p-4 pt-0">
+            {loadingContent ? (
+              <div className="flex flex-col items-center justify-center py-8 space-y-2 text-center">
+                <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}><RefreshCw className="w-6 h-6 text-green-400" /></motion.div>
+                <p className="text-gray-400 text-sm">Loading saved tracks...</p>
+              </div>
+            ) : userSavedTracks.length > 0 ? (
+              userSavedTracks.map((track) => (
+                <motion.button key={track.id} onClick={() => handleTrackSelect(track.id)} className="w-full text-left p-2 rounded text-xs hover:bg-gray-700 transition-colors text-white" whileHover={{ scale: 1.02, x: 4 }} whileTap={{ scale: 0.98 }}>
+                  <div className="flex items-center space-x-2">
+                    <img src={getAlbumImage(track)} alt={track.album.name} className="w-10 h-10 rounded" />
+                    <div className="flex-1 min-w-0">
+                      <div className="truncate font-medium">{track.name}</div>
+                      <div className="text-xs opacity-70 truncate">{track.artists[0].name}</div>
+                    </div>
+                  </div>
+                </motion.button>
+              ))
+            ) : (
+              <div className="text-center py-8 text-gray-400 text-sm">No saved tracks found.</div>
+            )}
+          </div>
+        );
+      default:
+        return null;
+    }
   };
 
   if (!accessToken) {
@@ -283,135 +353,105 @@ export const MusicPlayer: React.FC = () => {
   }
 
   return (
-    <div 
-      className="fixed bottom-4 right-4 z-50" 
-      ref={containerRef}
-    >
-      <AnimatePresence>
-        {isMinimized ? (
-          <motion.div
-            key="minimized-button"
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0, opacity: 0 }}
-            transition={{ type: "spring", duration: 0.5 }}
-            drag
-            dragConstraints={containerRef}
-            onDragEnd={handleDragEnd}
-            dragElastic={0.2}
-            style={{ position: 'absolute', bottom: 0, right: 0 }}
-          >
-            <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-              <Button
-                onClick={() => setIsMinimized(false)}
-                className="w-14 h-14 rounded-full bg-green-500 hover:bg-green-600 shadow-2xl text-black"
-                aria-label="Open Spotify Player"
-              >
-                <Music className="w-6 h-6" />
-              </Button>
+    <DraggableCore nodeRef={componentRef} handle=".drag-handle" onDrag={handleDrag}>
+      <motion.div
+        ref={componentRef}
+        className="fixed bottom-4 left-4 z-50"
+        style={{ x: position.x, y: position.y }}
+        initial={{ scale: 0, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ type: "spring", duration: 0.5 }}
+      >
+        <AnimatePresence>
+          {isMinimized ? (
+            <motion.div
+              key="minimized-button"
+              initial={{ scale: 0, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0, opacity: 0 }}
+              transition={{ type: "spring", duration: 0.5 }}
+            >
+              <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
+                <Button
+                  onClick={() => setIsMinimized(false)}
+                  className="w-14 h-14 rounded-full bg-green-500 hover:bg-green-600 shadow-2xl text-black"
+                  aria-label="Open Spotify Player"
+                >
+                  <Music className="w-6 h-6" />
+                </Button>
+              </motion.div>
             </motion.div>
-          </motion.div>
-        ) : (
-          <motion.div
-            key="full-player"
-            initial={{ y: 200, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 200, opacity: 0 }}
-            transition={{ type: "spring", stiffness: 100, damping: 20 }}
-            className="w-80"
-            drag
-            dragConstraints={containerRef}
-            onDragEnd={handleDragEnd}
-            dragElastic={0.2}
-            style={{ position: 'absolute', bottom: 0, right: 0 }}
-          >
-            <Card className="bg-gray-900 backdrop-blur-lg border-gray-700 shadow-2xl overflow-hidden">
-              <CardContent className="p-0">
-                <div className="flex items-center justify-between p-3 bg-gradient-to-r from-green-600 to-green-500 text-black cursor-grab active:cursor-grabbing">
-                  <div className="flex items-center space-x-2">
-                    <Music className="w-4 h-4" />
-                    <h3 className="text-sm font-bold">Spotify Player</h3>
+          ) : (
+            <motion.div
+              key="full-player"
+              initial={{ y: 200, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: 200, opacity: 0 }}
+              transition={{ type: "spring", stiffness: 100, damping: 20 }}
+              className="w-80"
+            >
+              <Card className="bg-gray-900 backdrop-blur-lg border-gray-700 shadow-2xl overflow-hidden">
+                <CardContent className="p-0">
+                  <div ref={dragHandleRef} className="drag-handle cursor-grab active:cursor-grabbing flex items-center justify-between p-3 bg-gradient-to-r from-green-600 to-green-500 text-black">
+                    <div className="flex items-center space-x-2">
+                      <Music className="w-4 h-4" />
+                      <h3 className="text-sm font-bold">Spotify Player</h3>
+                    </div>
+                    <div className="flex items-center space-x-1">
+                      <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowMainPanel(!showMainPanel)}
+                          className="w-6 h-6 text-black hover:text-black/80 p-0 hover:bg-white/20"
+                          aria-label="Toggle Main Panel"
+                        >
+                          {showMainPanel ? <X className="w-4 h-4" /> : <ListMusic className="w-4 h-4" />}
+                        </Button>
+                      </motion.div>
+                      <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setIsMinimized(true)}
+                          className="w-6 h-6 text-black hover:text-black/80 p-0 hover:bg-white/20"
+                          aria-label="Minimize Spotify Player"
+                        >
+                          <X className="w-4 h-4" />
+                        </Button>
+                      </motion.div>
+                    </div>
                   </div>
-                  <div className="flex items-center space-x-1">
-                    <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setShowSearch(!showSearch)}
-                        className="w-6 h-6 text-black hover:text-black/80 p-0 hover:bg-white/20"
-                        aria-label="Toggle Search"
-                      >
-                        <Search className="w-3 h-3" />
-                      </Button>
-                    </motion.div>
-                    <motion.div whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }}>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setIsMinimized(true)}
-                        className="w-6 h-6 text-black hover:text-black/80 p-0 hover:bg-white/20"
-                        aria-label="Minimize Spotify Player"
-                      >
-                        <X className="w-4 h-4" />
-                      </Button>
-                    </motion.div>
-                  </div>
-                </div>
 
-                <AnimatePresence>
-                  {showSearch && (
-                    <motion.div
-                      initial={{ height: 0, opacity: 0 }}
-                      animate={{ height: "auto", opacity: 1 }}
-                      exit={{ height: 0, opacity: 0 }}
-                      transition={{ duration: 0.3 }}
-                      className="border-b border-gray-700"
-                    >
-                      <div className="p-4 space-y-3">
-                        <div className="flex space-x-2">
-                          <Input
-                            type="text"
-                            placeholder="Search songs..."
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-                            className="flex-1 bg-gray-800 border-gray-600 text-white"
-                            disabled={isSearching}
-                          />
-                          <Button onClick={handleSearch} disabled={isSearching || !searchQuery.trim()} className="bg-green-600 hover:bg-green-700 text-black">
-                            {isSearching ? <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}><RefreshCw className="w-4 h-4" /></motion.div> : <Search className="w-4 h-4" />}
+                  <AnimatePresence>
+                    {showMainPanel && (
+                      <motion.div
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: "auto", opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        transition={{ duration: 0.3 }}
+                        className="border-b border-gray-700"
+                      >
+                        <div className="flex justify-around bg-gray-800 border-b border-gray-700">
+                          <Button variant="ghost" className={`flex-1 rounded-none ${activeTab === 'search' ? 'border-b-2 border-green-500 text-white' : 'text-gray-400'}`} onClick={() => setActiveTab('search')}>
+                            <Search className="w-4 h-4 mr-2" /> Search
+                          </Button>
+                          <Button variant="ghost" className={`flex-1 rounded-none ${activeTab === 'playlists' ? 'border-b-2 border-green-500 text-white' : 'text-gray-400'}`} onClick={() => setActiveTab('playlists')}>
+                            <ListMusic className="w-4 h-4 mr-2" /> Playlists
+                          </Button>
+                          <Button variant="ghost" className={`flex-1 rounded-none ${activeTab === 'library' ? 'border-b-2 border-green-500 text-white' : 'text-gray-400'}`} onClick={() => setActiveTab('library')}>
+                            <Library className="w-4 h-4 mr-2" /> Library
                           </Button>
                         </div>
-                        {searchResults.length > 0 && (
-                          <div className="max-h-32 overflow-y-auto space-y-1">
-                            {searchResults.map((track) => (
-                              <motion.button key={track.id} onClick={() => handleTrackSelect(track)} className="w-full text-left p-2 rounded text-xs hover:bg-gray-700 transition-colors text-white" whileHover={{ scale: 1.02, x: 4 }} whileTap={{ scale: 0.98 }}>
-                                <div className="flex items-center space-x-2">
-                                  <img src={getAlbumImage(track)} alt={track.album.name} className="w-6 h-6 rounded" />
-                                  <div className="flex-1 min-w-0">
-                                    <div className="truncate font-medium">{track.name}</div>
-                                    <div className="text-xs opacity-70 truncate">{track.artists[0].name}</div>
-                                  </div>
-                                </div>
-                              </motion.button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                        {renderContent()}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
 
-                {loadingContent ? (
-                  <div className="flex flex-col items-center justify-center p-8 space-y-4 text-center">
-                    <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: "linear" }}><RefreshCw className="w-8 h-8 text-green-400" /></motion.div>
-                    <p className="text-gray-400">Creating your personal playlist...</p>
-                  </div>
-                ) : (
-                  iframeUri && (
+                  {iframeUri ? (
                     <motion.div key={iframeUri} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.5 }} className="w-full h-80">
                       <iframe
-                        title="Spotify Embed"
+                        title="Spotify Embed: Recommendation Playlist"
                         src={iframeUri}
                         width="100%"
                         height="100%"
@@ -420,21 +460,19 @@ export const MusicPlayer: React.FC = () => {
                         loading="lazy"
                       />
                     </motion.div>
-                  )
-                )}
-                
-                {!iframeUri && !loadingContent && !showSearch && (
-                  <div className="p-4 text-center">
-                    <p className="text-gray-400 text-sm">
-                      No playlist loaded. Search for a song to play or reconnect.
-                    </p>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+                  ) : (
+                    <div className="p-4 text-center">
+                      <p className="text-gray-400 text-sm">
+                        No playlist or track loaded. Search or select a song to start.
+                      </p>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    </DraggableCore>
   );
 };

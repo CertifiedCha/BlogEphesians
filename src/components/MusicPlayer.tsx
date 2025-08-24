@@ -32,23 +32,52 @@ export const MusicPlayer: React.FC = () => {
   const REDIRECT_URI = 'https://blogephesians.onrender.com';
   const SCOPES = 'user-top-read playlist-modify-private playlist-modify-public';
 
-  // Handles Spotify authentication after redirect
+  // Handles redirect after authentication and exchanges code for token
   useEffect(() => {
-    const hash = window.location.hash;
-    if (hash) {
-      const token = hash.split('&').find(s => s.startsWith('access_token'))?.split('=')[1];
-      if (token) {
-        setAccessToken(token);
-        window.location.hash = '';
-        localStorage.setItem('spotify_access_token', token);
-      }
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+
+    if (code) {
+      const codeVerifier = localStorage.getItem('code_verifier');
+
+      const getToken = async () => {
+        try {
+          const response = await fetch('https://accounts.spotify.com/api/token', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({
+              client_id: CLIENT_ID,
+              grant_type: 'authorization_code',
+              code,
+              redirect_uri: REDIRECT_URI,
+              code_verifier: codeVerifier,
+            }),
+          });
+          const data = await response.json();
+          if (data.access_token) {
+            setAccessToken(data.access_token);
+            localStorage.setItem('spotify_access_token', data.access_token);
+            // Clean up the URL
+            window.history.pushState({}, document.title, REDIRECT_URI);
+          } else {
+            toast.error('Failed to get access token.');
+          }
+        } catch (error) {
+          console.error('Error exchanging code for token:', error);
+          toast.error('Authentication failed.');
+        }
+      };
+      getToken();
     } else {
       const savedToken = localStorage.getItem('spotify_access_token');
       if (savedToken) {
         setAccessToken(savedToken);
       }
     }
-  }, []);
+  }, [CLIENT_ID, REDIRECT_URI]);
+
 
   // Fetch top tracks and create a playlist when access token is available
   useEffect(() => {
@@ -58,7 +87,7 @@ export const MusicPlayer: React.FC = () => {
   }, [accessToken]);
 
   async function fetchWebApi(endpoint: string, method: string, body?: any) {
-    const res = await fetch(`https://api.spotify.com/${endpoint}`, {
+    const res = await fetch(`https://api.spotify.com/v1/${endpoint}`, {
       headers: {
         Authorization: `Bearer ${accessToken}`,
       },
@@ -75,20 +104,20 @@ export const MusicPlayer: React.FC = () => {
   }
 
   async function getTopTracks(): Promise<SpotifyTrack[]> {
-    return (await fetchWebApi('v1/me/top/tracks?time_range=long_term&limit=5', 'GET')).items;
+    return (await fetchWebApi('me/top/tracks?time_range=long_term&limit=5', 'GET')).items;
   }
 
   async function createPlaylist(tracksUri: string[]): Promise<string> {
-    const { id: user_id } = await fetchWebApi('v1/me', 'GET');
+    const { id: user_id } = await fetchWebApi('me', 'GET');
     const playlist = await fetchWebApi(
-      `v1/users/${user_id}/playlists`, 'POST', {
+      `users/${user_id}/playlists`, 'POST', {
         "name": "My Top Tracks",
         "description": "Playlist of my all-time top tracks, created automatically.",
         "public": false
       });
     
     await fetchWebApi(
-      `v1/playlists/${playlist.id}/tracks?uris=${tracksUri.join(',')}`,
+      `playlists/${playlist.id}/tracks?uris=${tracksUri.join(',')}`,
       'POST'
     );
     return playlist.id;
@@ -132,9 +161,44 @@ export const MusicPlayer: React.FC = () => {
     }
   }
   
-  const connectToSpotify = () => {
-    const authUrl = `https://accounts.spotify.com/authorize?client_id=${CLIENT_ID}&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&scope=${encodeURIComponent(SCOPES)}`;
-    window.location.href = authUrl;
+  const connectToSpotify = async () => {
+    // PKCE helper functions
+    const generateRandomString = (length: number) => {
+      const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      const values = crypto.getRandomValues(new Uint8Array(length));
+      return values.map(x => possible[x % possible.length]).join('');
+    };
+
+    const sha256 = async (plain: string) => {
+      const encoder = new TextEncoder();
+      const data = encoder.encode(plain);
+      return window.crypto.subtle.digest('SHA-256', data);
+    };
+
+    const base64encode = (input: ArrayBuffer) => {
+      return btoa(String.fromCharCode(...new Uint8Array(input)))
+        .replace(/=/g, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_');
+    };
+
+    const codeVerifier = generateRandomString(128);
+    const hashed = await sha256(codeVerifier);
+    const codeChallenge = base64encode(hashed);
+
+    localStorage.setItem('code_verifier', codeVerifier);
+
+    const authUrl = new URL('https://accounts.spotify.com/authorize');
+    const params = {
+      response_type: 'code',
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+      redirect_uri: REDIRECT_URI,
+      code_challenge_method: 'S256',
+      code_challenge: codeChallenge,
+    };
+    authUrl.search = new URLSearchParams(params).toString();
+    window.location.href = authUrl.toString();
   };
 
   const searchSpotifyTracks = async (query: string): Promise<void> => {
@@ -144,7 +208,7 @@ export const MusicPlayer: React.FC = () => {
     }
     setIsSearching(true);
     try {
-      const response = await fetchWebApi(`v1/search?q=${encodeURIComponent(query)}&type=track&limit=10`, 'GET');
+      const response = await fetchWebApi(`search?q=${encodeURIComponent(query)}&type=track&limit=10`, 'GET');
       setSearchResults(response.tracks.items);
       toast.success(`Found ${response.tracks.items.length} tracks.`);
     } catch (error) {

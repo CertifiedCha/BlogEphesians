@@ -4,8 +4,8 @@ import { Button } from './ui/button';
 import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { Slider } from './ui/slider';
-import { motion, AnimatePresence } from 'motion/react';
-import { toast } from 'sonner@2.0.3';
+import { motion, AnimatePresence } from 'framer-motion';
+import { toast } from 'sonner';
 import { DolphinSpinner } from './LoadingScreen';
 
 interface SpotifyTrack {
@@ -28,6 +28,32 @@ interface SpotifySearchResponse {
     total: number;
   };
 }
+
+// Helper functions for PKCE flow using Web Crypto API
+const generateRandomString = (length: number): string => {
+    const array = new Uint8Array(length);
+    window.crypto.getRandomValues(array);
+    const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let text = '';
+    for (let i = 0; i < length; i++) {
+        text += possible.charAt(array[i] % possible.length);
+    }
+    return text;
+};
+
+const sha256 = async (plain: string): Promise<string> => {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(plain);
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+    return bufferToBase64Url(hashBuffer);
+};
+
+const bufferToBase64Url = (buffer: ArrayBuffer): string => {
+    return btoa(String.fromCharCode.apply(null, new Uint8Array(buffer) as any))
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
+};
 
 export const MusicPlayer: React.FC = () => {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -53,8 +79,10 @@ export const MusicPlayer: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Spotify API configuration
-  const CLIENT_ID = '83721f40f91c46bcae3379a3762f114e'; // Replace with your Spotify Client ID
-  const REDIRECT_URI = window.location.origin;
+  // IMPORTANT: Replace with your actual Spotify Client ID
+  const CLIENT_ID = 'y83721f40f91c46bcae3379a3762f114e';
+  // IMPORTANT: Replace with your actual Redirect URI
+  const REDIRECT_URI = 'https://blogephesians.onrender.com/callback';
   const SCOPES = [
     'streaming',
     'user-read-email',
@@ -65,26 +93,49 @@ export const MusicPlayer: React.FC = () => {
     'playlist-read-collaborative'
   ].join(' ');
 
-  // Initialize Spotify Web Playback SDK
+  // PKCE Authorization Code Flow
   useEffect(() => {
-    if (!window.Spotify) {
-      const script = document.createElement('script');
-      script.src = 'https://sdk.scdn.co/spotify-player.js';
-      script.async = true;
-      document.head.appendChild(script);
-    }
+    const urlParams = new URLSearchParams(window.location.search);
+    const code = urlParams.get('code');
+    
+    if (code) {
+      const codeVerifier = localStorage.getItem('code_verifier');
+      if (codeVerifier) {
+        const exchangeCodeForToken = async () => {
+          try {
+            const response = await fetch('https://accounts.spotify.com/api/token', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/x-www-form-urlencoded',
+              },
+              body: new URLSearchParams({
+                client_id: CLIENT_ID,
+                grant_type: 'authorization_code',
+                code: code,
+                redirect_uri: REDIRECT_URI,
+                code_verifier: codeVerifier,
+              }).toString(),
+            });
 
-    // Check for access token in URL hash (after Spotify redirect)
-    const hash = window.location.hash;
-    if (hash) {
-      const token = hash.split('&')[0].split('=')[1];
-      if (token) {
-        setAccessToken(token);
-        window.location.hash = '';
-        localStorage.setItem('spotify_access_token', token);
+            if (!response.ok) {
+              const errorData = await response.json();
+              throw new Error(errorData.error_description || 'Token exchange failed');
+            }
+
+            const data = await response.json();
+            setAccessToken(data.access_token);
+            localStorage.setItem('spotify_access_token', data.access_token);
+            localStorage.removeItem('code_verifier');
+            window.history.pushState({}, '', '/');
+            toast.success('Successfully connected to Spotify!');
+          } catch (error) {
+            console.error('Error exchanging code for token:', error);
+            toast.error('Failed to authenticate. Please try again.');
+          }
+        };
+        exchangeCodeForToken();
       }
     } else {
-      // Check localStorage for existing token
       const savedToken = localStorage.getItem('spotify_access_token');
       if (savedToken) {
         setAccessToken(savedToken);
@@ -92,47 +143,98 @@ export const MusicPlayer: React.FC = () => {
     }
   }, []);
 
-  // Initialize with popular tracks when token is available
   useEffect(() => {
     if (accessToken) {
-      searchSpotifyTracks('top hits 2024');
+      setTimeout(() => searchSpotifyTracks('top hits 2024'), 500); 
     }
   }, [accessToken]);
 
-  // Audio progress tracking for preview
   useEffect(() => {
-    if (isPlaying && currentTrack && audioRef.current) {
-      progressIntervalRef.current = setInterval(() => {
-        if (audioRef.current) {
-          const current = audioRef.current.currentTime * 1000;
-          setCurrentTime(current);
-          
-          if (current >= (audioRef.current.duration * 1000) || current >= 30000) {
-            handleNext();
-          }
+    const handleNext = () => {
+        if (tracks.length === 0) return;
+        let nextIndex = 0;
+        if (isShuffled) {
+            nextIndex = Math.floor(Math.random() * tracks.length);
+        } else {
+            nextIndex = currentTrackIndex + 1;
+            if (nextIndex >= tracks.length) {
+                nextIndex = repeatMode === 'all' ? 0 : currentTrackIndex;
+                if (repeatMode === 'off') {
+                    setIsPlaying(false);
+                    return;
+                }
+            }
         }
-      }, 1000);
+        
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = 0;
+            audioRef.current = null;
+        }
+        
+        setCurrentTrackIndex(nextIndex);
+        setCurrentTrack(tracks[nextIndex]);
+        setCurrentTime(0);
+        setIsPlaying(false);
+    };
+
+    const handleTimeUpdate = () => {
+        if (audioRef.current) {
+            const current = audioRef.current.currentTime * 1000;
+            setCurrentTime(current);
+            if (current >= 30000) {
+                handleNext();
+            }
+        }
+    };
+
+    const handleNextOnEnd = () => {
+        handleNext();
+    };
+
+    if (isPlaying && currentTrack && audioRef.current) {
+        audioRef.current.addEventListener('timeupdate', handleTimeUpdate);
+        audioRef.current.addEventListener('ended', handleNextOnEnd);
+        progressIntervalRef.current = setInterval(() => {
+            if (audioRef.current) {
+                const current = audioRef.current.currentTime * 1000;
+                setCurrentTime(current);
+            }
+        }, 500);
     } else {
-      if (progressIntervalRef.current) {
-        clearInterval(progressIntervalRef.current);
-      }
+        if (audioRef.current) {
+            audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
+            audioRef.current.removeEventListener('ended', handleNextOnEnd);
+        }
+        if (progressIntervalRef.current) {
+            clearInterval(progressIntervalRef.current);
+        }
     }
 
     return () => {
-      if (progressIntervalRef.current) {
-        clearInterval(progressIntervalRef.current);
-      }
+        if (audioRef.current) {
+            audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
+            audioRef.current.removeEventListener('ended', handleNextOnEnd);
+        }
+        if (progressIntervalRef.current) {
+            clearInterval(progressIntervalRef.current);
+        }
     };
-  }, [isPlaying, currentTrack]);
+}, [isPlaying, currentTrack, tracks, isShuffled, currentTrackIndex, repeatMode]);
 
-  const connectToSpotify = () => {
+  const connectToSpotify = async () => {
     setIsConnecting(true);
-    const authUrl = `https://accounts.spotify.com/authorize?` +
-      `client_id=${CLIENT_ID}&` +
-      `response_type=token&` +
-      `redirect_uri=${encodeURIComponent(REDIRECT_URI)}&` +
-      `scope=${encodeURIComponent(SCOPES)}`;
+    const codeVerifier = generateRandomString(128);
+    const codeChallenge = await sha256(codeVerifier);
+    const authUrl = `https://accounts.spotify.com/authorize` +
+      `?client_id=${CLIENT_ID}` +
+      `&response_type=code` +
+      `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+      `&scope=${encodeURIComponent(SCOPES)}` +
+      `&code_challenge_method=S256` +
+      `&code_challenge=${codeChallenge}`;
     
+    localStorage.setItem('code_verifier', codeVerifier);
     window.location.href = authUrl;
   };
 
@@ -141,7 +243,6 @@ export const MusicPlayer: React.FC = () => {
       toast.error('Please connect to Spotify first');
       return;
     }
-
     setIsSearching(true);
     try {
       const response = await fetch(
@@ -152,39 +253,32 @@ export const MusicPlayer: React.FC = () => {
           }
         }
       );
-
       if (response.status === 401) {
-        // Token expired
         localStorage.removeItem('spotify_access_token');
         setAccessToken(null);
         toast.error('Session expired. Please reconnect to Spotify');
         return;
       }
-
       if (!response.ok) {
-        throw new Error('Failed to search tracks');
+        const errorData = await response.json();
+        throw new Error(errorData.error?.message || 'Failed to search tracks');
       }
-
       const data: SpotifySearchResponse = await response.json();
-      
-      if (searchQuery === query) {
+      if (searchQuery === query || query === 'top hits 2024') {
         setSearchResults(data.tracks.items);
         if (!showSearch && query !== 'top hits 2024') {
           setShowSearch(true);
         }
-        
-        // Initialize playlist with search results if empty
         if (tracks.length === 0 && data.tracks.items.length > 0) {
           setTracks(data.tracks.items);
           setCurrentTrack(data.tracks.items[0]);
         }
       }
-      
       toast.success(`Found ${data.tracks.items.length} tracks`);
     } catch (error) {
       console.error('Spotify search error:', error);
-      toast.error('Failed to search tracks');
       setSearchResults([]);
+      toast.error('Failed to search tracks');
     } finally {
       setIsSearching(false);
     }
@@ -200,68 +294,35 @@ export const MusicPlayer: React.FC = () => {
       toast.error('No track selected');
       return;
     }
-
     if (!currentTrack.preview_url) {
-      toast.warning('Preview not available for this track');
-      // Open in Spotify
+      toast.warning('Preview not available, opening in Spotify...');
       window.open(currentTrack.external_urls.spotify, '_blank');
       return;
     }
-
-    if (isPlaying) {
-      audioRef.current?.pause();
-      setIsPlaying(false);
-    } else {
-      if (!audioRef.current) {
-        audioRef.current = new Audio(currentTrack.preview_url);
-        audioRef.current.volume = (isMuted ? 0 : volume) / 100;
-        
-        audioRef.current.onended = () => {
-          handleNext();
-        };
+    if (audioRef.current) {
+      if (isPlaying) {
+        audioRef.current.pause();
+        setIsPlaying(false);
+      } else {
+        audioRef.current.play().then(() => {
+          setIsPlaying(true);
+          toast.success(`Now playing: ${currentTrack.name}`);
+        }).catch(error => {
+          console.error('Audio play error:', error);
+          toast.error('Failed to play audio');
+        });
       }
-      
+    } else {
+      audioRef.current = new Audio(currentTrack.preview_url);
+      audioRef.current.volume = (isMuted ? 0 : volume) / 100;
       audioRef.current.play().then(() => {
         setIsPlaying(true);
-        toast.success(`Now playing: ${currentTrack.name} by ${currentTrack.artists[0].name}`);
+        toast.success(`Now playing: ${currentTrack.name}`);
       }).catch(error => {
         console.error('Audio play error:', error);
         toast.error('Failed to play audio');
       });
     }
-  };
-
-  const handleNext = () => {
-    if (tracks.length === 0) return;
-
-    if (repeatMode === 'one') {
-      setCurrentTime(0);
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-      }
-      return;
-    }
-
-    let nextIndex;
-    if (isShuffled) {
-      nextIndex = Math.floor(Math.random() * tracks.length);
-    } else {
-      nextIndex = currentTrackIndex + 1;
-      if (nextIndex >= tracks.length) {
-        nextIndex = repeatMode === 'all' ? 0 : currentTrackIndex;
-      }
-    }
-    
-    setCurrentTrackIndex(nextIndex);
-    setCurrentTrack(tracks[nextIndex]);
-    setCurrentTime(0);
-    
-    // Stop current audio
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-    setIsPlaying(false);
   };
 
   const handlePrevious = () => {
@@ -272,21 +333,18 @@ export const MusicPlayer: React.FC = () => {
       }
       return;
     }
-
     let prevIndex = currentTrackIndex - 1;
     if (prevIndex < 0) {
       prevIndex = tracks.length - 1;
     }
-    
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.currentTime = 0;
+      audioRef.current = null;
+    }
     setCurrentTrackIndex(prevIndex);
     setCurrentTrack(tracks[prevIndex]);
     setCurrentTime(0);
-    
-    // Stop current audio
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
     setIsPlaying(false);
   };
 
@@ -296,28 +354,28 @@ export const MusicPlayer: React.FC = () => {
         setTracks(prev => [...prev, track]);
       }
     }
-    
     const trackIndex = tracks.findIndex(t => t.id === track.id);
     if (trackIndex !== -1) {
       setCurrentTrackIndex(trackIndex);
-      setCurrentTrack(track);
-      setCurrentTime(0);
-      setShowSearch(false);
-      
-      // Stop current audio
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current = null;
-      }
-      setIsPlaying(false);
+    } else {
+      const newTracks = [...tracks, track];
+      setTracks(newTracks);
+      setCurrentTrackIndex(newTracks.length - 1);
     }
+    setCurrentTrack(track);
+    setCurrentTime(0);
+    setShowSearch(false);
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current = null;
+    }
+    setIsPlaying(false);
   };
 
   const handleVolumeChange = (value: number[]) => {
     const newVolume = value[0];
     setVolume(newVolume);
     if (newVolume > 0) setIsMuted(false);
-    
     if (audioRef.current) {
       audioRef.current.volume = newVolume / 100;
     }
@@ -344,9 +402,8 @@ export const MusicPlayer: React.FC = () => {
   };
 
   const getAlbumImage = (track: SpotifyTrack) => {
-    return track.album.images.find(img => img.width >= 64)?.url || 
-           track.album.images[0]?.url || 
-           'https://via.placeholder.com/64x64/1ed760/000000?text=♪';
+    const image = track.album.images.find(img => img.width >= 64);
+    return image ? image.url : 'https://via.placeholder.com/64x64/1ed760/000000?text=♪';
   };
 
   if (!accessToken) {
@@ -465,7 +522,7 @@ export const MusicPlayer: React.FC = () => {
                   onClick={() => setIsMinimized(true)}
                   className="w-6 h-6 text-black hover:text-black/80 p-0 hover:bg-white/20"
                 >
-                  ×
+                  <span className="text-xl leading-none">×</span>
                 </Button>
               </motion.div>
             </div>
@@ -662,7 +719,7 @@ export const MusicPlayer: React.FC = () => {
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={handleNext}
+                    onClick={() => handleTrackSelect(tracks[currentTrackIndex + 1])}
                     className="w-8 h-8 p-0 text-gray-400 hover:text-white"
                   >
                     <SkipForward className="w-4 h-4" />
@@ -680,7 +737,7 @@ export const MusicPlayer: React.FC = () => {
                   >
                     <Repeat className="w-4 h-4" />
                     {repeatMode === 'one' && (
-                      <div className="absolute -top-1 -right-1 w-2 h-2 bg-green-400 rounded-full" />
+                      <div className="absolute top-1 right-1 w-2 h-2 bg-green-400 rounded-full" />
                     )}
                   </Button>
                 </motion.div>

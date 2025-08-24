@@ -231,14 +231,14 @@ export const MusicPlayer: React.FC = () => {
 
   const handleTrackSelect = (track: SpotifyTrack) => {
     setIframeUri(`https://open.spotify.com/embed/track/${track.id}?utm_source=generator`);
-    setShowMainPanel(false);
+    setShowMainPanel(true); // Keep the panel open after selecting a track
     setIsMinimized(false);
     toast.success(`Now playing: ${track.name} by ${track.artists[0].name}`);
   };
 
   const handlePlaylistSelect = (playlist: SpotifyPlaylist) => {
     setIframeUri(`https://open.spotify.com/embed/playlist/${playlist.id}?utm_source=generator`);
-    setShowMainPanel(false);
+    setShowMainPanel(true); // Keep the panel open after selecting a playlist
     setIsMinimized(false);
     toast.success(`Now playing playlist: ${playlist.name}`);
   };
@@ -462,7 +462,7 @@ export const MusicPlayer: React.FC = () => {
                     )}
                   </AnimatePresence>
 
-                  {iframeUri ? (
+                  {iframeUri && (
                     <motion.div key={iframeUri} initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.5 }} className="w-full h-80">
                       <iframe
                         title="Spotify Embed: Recommendation Playlist"
@@ -474,12 +474,13 @@ export const MusicPlayer: React.FC = () => {
                         loading="lazy"
                       />
                     </motion.div>
-                  ) : (
-                    <div className="p-4 text-center">
-                      <p className="text-gray-400 text-sm">
-                        No playlist or track loaded. Search or select a song to start.
-                      </p>
-                    </div>
+                  )}
+                  {!iframeUri && showMainPanel && (
+                     <div className="p-4 text-center">
+                        <p className="text-gray-400 text-sm">
+                           No playlist or track loaded. Search or select a song to start.
+                        </p>
+                     </div>
                   )}
                 </CardContent>
               </Card>

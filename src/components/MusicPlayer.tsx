@@ -5,7 +5,7 @@ import { Card, CardContent } from './ui/card';
 import { Input } from './ui/input';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
-import { DraggableCore } from 'react-draggable-core'; // You need to install this library
+import Draggable from 'react-draggable';
 
 interface SpotifyTrack {
   id: string;

@@ -103,7 +103,7 @@ export const MusicPlayer: React.FC = () => {
       if (codeVerifier) {
         const exchangeCodeForToken = async () => {
           try {
-            const response = await fetch('https://accounts.spotify.com/authorize', {
+            const response = await fetch('https://accounts.spotify.com/api/token', {
               method: 'POST',
               headers: {
                 'Content-Type': 'application/x-www-form-urlencoded',
@@ -226,9 +226,7 @@ export const MusicPlayer: React.FC = () => {
     setIsConnecting(true);
     const codeVerifier = generateRandomString(128);
     const codeChallenge = await sha256(codeVerifier);
-    localStorage.setItem('code_verifier', codeVerifier);
-    
-    const authUrl = `https://accounts.spotify.com/authorize?` +
+    const authUrl = `https://accounts.spotify.com/authorize` +
       `?client_id=${CLIENT_ID}` +
       `&response_type=code` +
       `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
@@ -236,6 +234,7 @@ export const MusicPlayer: React.FC = () => {
       `&code_challenge_method=S256` +
       `&code_challenge=${codeChallenge}`;
     
+    localStorage.setItem('code_verifier', codeVerifier);
     window.location.href = authUrl;
   };
 

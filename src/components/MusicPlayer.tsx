@@ -7,7 +7,6 @@ import { Slider } from './ui/slider';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
 import { DolphinSpinner } from './LoadingScreen';
-import crypto from 'crypto';
 
 interface SpotifyTrack {
   id: string;
@@ -30,28 +29,30 @@ interface SpotifySearchResponse {
   };
 }
 
-// Helper functions for PKCE flow
-const generateRandomString = (length: number) => {
-    let text = '';
+// Helper functions for PKCE flow using Web Crypto API
+const generateRandomString = (length: number): string => {
+    const array = new Uint8Array(length);
+    window.crypto.getRandomValues(array);
     const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    let text = '';
     for (let i = 0; i < length; i++) {
-        text += possible.charAt(Math.floor(Math.random() * possible.length));
+        text += possible.charAt(array[i] % possible.length);
     }
     return text;
 };
 
-const sha256 = async (plain: string) => {
+const sha256 = async (plain: string): Promise<string> => {
     const encoder = new TextEncoder();
     const data = encoder.encode(plain);
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
     return bufferToBase64Url(hashBuffer);
 };
 
-const bufferToBase64Url = (buffer: ArrayBuffer) => {
-    return btoa(String.fromCharCode(...new Uint8Array(buffer)))
-        .replace(/=/g, '')
+const bufferToBase64Url = (buffer: ArrayBuffer): string => {
+    return btoa(String.fromCharCode.apply(null, new Uint8Array(buffer) as any))
         .replace(/\+/g, '-')
-        .replace(/\//g, '_');
+        .replace(/\//g, '_')
+        .replace(/=+$/, '');
 };
 
 export const MusicPlayer: React.FC = () => {
@@ -78,7 +79,9 @@ export const MusicPlayer: React.FC = () => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // Spotify API configuration
+  // IMPORTANT: Replace with your actual Spotify Client ID
   const CLIENT_ID = 'y83721f40f91c46bcae3379a3762f114e';
+  // IMPORTANT: Replace with your actual Redirect URI
   const REDIRECT_URI = 'https://blogephesians.onrender.com/callback';
   const SCOPES = [
     'streaming',
@@ -98,7 +101,6 @@ export const MusicPlayer: React.FC = () => {
     if (code) {
       const codeVerifier = localStorage.getItem('code_verifier');
       if (codeVerifier) {
-        // Exchange code for access token
         const exchangeCodeForToken = async () => {
           try {
             const response = await fetch('https://accounts.spotify.com/authorize', {
@@ -124,19 +126,16 @@ export const MusicPlayer: React.FC = () => {
             setAccessToken(data.access_token);
             localStorage.setItem('spotify_access_token', data.access_token);
             localStorage.removeItem('code_verifier');
-            window.history.pushState({}, '', '/'); // Clean up the URL
-
+            window.history.pushState({}, '', '/');
             toast.success('Successfully connected to Spotify!');
           } catch (error) {
             console.error('Error exchanging code for token:', error);
             toast.error('Failed to authenticate. Please try again.');
           }
         };
-
         exchangeCodeForToken();
       }
     } else {
-      // Check localStorage for existing token
       const savedToken = localStorage.getItem('spotify_access_token');
       if (savedToken) {
         setAccessToken(savedToken);
@@ -144,120 +143,92 @@ export const MusicPlayer: React.FC = () => {
     }
   }, []);
 
-  // Initialize with popular tracks when token is available
   useEffect(() => {
     if (accessToken) {
       setTimeout(() => searchSpotifyTracks('top hits 2024'), 500); 
     }
   }, [accessToken]);
 
-  // Audio progress tracking for preview
   useEffect(() => {
     const handleNext = () => {
-      if (tracks.length === 0) return;
-      let nextIndex = 0;
-      if (isShuffled) {
-        nextIndex = Math.floor(Math.random() * tracks.length);
-      } else {
-        nextIndex = currentTrackIndex + 1;
-        if (nextIndex >= tracks.length) {
-          nextIndex = repeatMode === 'all' ? 0 : currentTrackIndex;
-          if (repeatMode === 'off') {
-            setIsPlaying(false);
-            return;
-          }
+        if (tracks.length === 0) return;
+        let nextIndex = 0;
+        if (isShuffled) {
+            nextIndex = Math.floor(Math.random() * tracks.length);
+        } else {
+            nextIndex = currentTrackIndex + 1;
+            if (nextIndex >= tracks.length) {
+                nextIndex = repeatMode === 'all' ? 0 : currentTrackIndex;
+                if (repeatMode === 'off') {
+                    setIsPlaying(false);
+                    return;
+                }
+            }
         }
-      }
-      
-      if (audioRef.current) {
-        audioRef.current.pause();
-        audioRef.current.currentTime = 0;
-        audioRef.current = null;
-      }
-      
-      setCurrentTrackIndex(nextIndex);
-      setCurrentTrack(tracks[nextIndex]);
-      setCurrentTime(0);
-      setIsPlaying(false);
+        
+        if (audioRef.current) {
+            audioRef.current.pause();
+            audioRef.current.currentTime = 0;
+            audioRef.current = null;
+        }
+        
+        setCurrentTrackIndex(nextIndex);
+        setCurrentTrack(tracks[nextIndex]);
+        setCurrentTime(0);
+        setIsPlaying(false);
     };
 
     const handleTimeUpdate = () => {
-      if (audioRef.current) {
-        const current = audioRef.current.currentTime * 1000;
-        setCurrentTime(current);
-        if (current >= 30000) {
-          handleNext();
+        if (audioRef.current) {
+            const current = audioRef.current.currentTime * 1000;
+            setCurrentTime(current);
+            if (current >= 30000) {
+                handleNext();
+            }
         }
-      }
     };
 
     const handleNextOnEnd = () => {
-      handleNext();
+        handleNext();
     };
 
     if (isPlaying && currentTrack && audioRef.current) {
-      audioRef.current.addEventListener('timeupdate', handleTimeUpdate);
-      audioRef.current.addEventListener('ended', handleNextOnEnd);
-      progressIntervalRef.current = setInterval(() => {
-        if (audioRef.current) {
-          const current = audioRef.current.currentTime * 1000;
-          setCurrentTime(current);
-        }
-      }, 500);
+        audioRef.current.addEventListener('timeupdate', handleTimeUpdate);
+        audioRef.current.addEventListener('ended', handleNextOnEnd);
+        progressIntervalRef.current = setInterval(() => {
+            if (audioRef.current) {
+                const current = audioRef.current.currentTime * 1000;
+                setCurrentTime(current);
+            }
+        }, 500);
     } else {
-      if (audioRef.current) {
-        audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
-        audioRef.current.removeEventListener('ended', handleNextOnEnd);
-      }
-      if (progressIntervalRef.current) {
-        clearInterval(progressIntervalRef.current);
-      }
+        if (audioRef.current) {
+            audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
+            audioRef.current.removeEventListener('ended', handleNextOnEnd);
+        }
+        if (progressIntervalRef.current) {
+            clearInterval(progressIntervalRef.current);
+        }
     }
 
     return () => {
-      if (audioRef.current) {
-        audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
-        audioRef.current.removeEventListener('ended', handleNextOnEnd);
-      }
-      if (progressIntervalRef.current) {
-        clearInterval(progressIntervalRef.current);
-      }
-    };
-  }, [isPlaying, currentTrack, tracks, isShuffled, currentTrackIndex, repeatMode]);
-
- const connectToSpotify = async () => {
-    setIsConnecting(true);
-
-    // Helper functions for PKCE flow
-    const generateRandomString = (length: number) => {
-        let text = '';
-        const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-        for (let i = 0; i < length; i++) {
-            text += possible.charAt(Math.floor(Math.random() * possible.length));
+        if (audioRef.current) {
+            audioRef.current.removeEventListener('timeupdate', handleTimeUpdate);
+            audioRef.current.removeEventListener('ended', handleNextOnEnd);
         }
-        return text;
+        if (progressIntervalRef.current) {
+            clearInterval(progressIntervalRef.current);
+        }
     };
+}, [isPlaying, currentTrack, tracks, isShuffled, currentTrackIndex, repeatMode]);
 
-    const sha256 = async (plain: string) => {
-        const encoder = new TextEncoder();
-        const data = encoder.encode(plain);
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-        return bufferToBase64Url(hashBuffer);
-    };
-
-    const bufferToBase64Url = (buffer: ArrayBuffer) => {
-        return btoa(String.fromCharCode(...new Uint8Array(buffer)))
-            .replace(/=/g, '')
-            .replace(/\+/g, '-')
-            .replace(/\//g, '_');
-    };
-
+  const connectToSpotify = async () => {
+    setIsConnecting(true);
     const codeVerifier = generateRandomString(128);
     const codeChallenge = await sha256(codeVerifier);
-
     localStorage.setItem('code_verifier', codeVerifier);
-
-    const authUrl = `https://accounts.spotify.com/authorize` +
+    
+    const authUrl = `https://accounts.spotify.com/authorize?` +
       `?client_id=${CLIENT_ID}` +
       `&response_type=code` +
       `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
@@ -266,14 +237,13 @@ export const MusicPlayer: React.FC = () => {
       `&code_challenge=${codeChallenge}`;
     
     window.location.href = authUrl;
-};
+  };
 
   const searchSpotifyTracks = async (query: string): Promise<void> => {
     if (!accessToken) {
       toast.error('Please connect to Spotify first');
       return;
     }
-
     setIsSearching(true);
     try {
       const response = await fetch(
@@ -284,33 +254,27 @@ export const MusicPlayer: React.FC = () => {
           }
         }
       );
-
       if (response.status === 401) {
         localStorage.removeItem('spotify_access_token');
         setAccessToken(null);
         toast.error('Session expired. Please reconnect to Spotify');
         return;
       }
-
       if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.error?.message || 'Failed to search tracks');
       }
-
       const data: SpotifySearchResponse = await response.json();
-      
       if (searchQuery === query || query === 'top hits 2024') {
         setSearchResults(data.tracks.items);
         if (!showSearch && query !== 'top hits 2024') {
           setShowSearch(true);
         }
-        
         if (tracks.length === 0 && data.tracks.items.length > 0) {
           setTracks(data.tracks.items);
           setCurrentTrack(data.tracks.items[0]);
         }
       }
-      
       toast.success(`Found ${data.tracks.items.length} tracks`);
     } catch (error) {
       console.error('Spotify search error:', error);
@@ -336,7 +300,6 @@ export const MusicPlayer: React.FC = () => {
       window.open(currentTrack.external_urls.spotify, '_blank');
       return;
     }
-
     if (audioRef.current) {
       if (isPlaying) {
         audioRef.current.pause();

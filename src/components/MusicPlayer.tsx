@@ -225,23 +225,48 @@ export const MusicPlayer: React.FC = () => {
     };
   }, [isPlaying, currentTrack, tracks, isShuffled, currentTrackIndex, repeatMode]);
 
-  const connectToSpotify = async () => {
+ const connectToSpotify = async () => {
     setIsConnecting(true);
+
+    // Helper functions for PKCE flow
+    const generateRandomString = (length: number) => {
+        let text = '';
+        const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        for (let i = 0; i < length; i++) {
+            text += possible.charAt(Math.floor(Math.random() * possible.length));
+        }
+        return text;
+    };
+
+    const sha256 = async (plain: string) => {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(plain);
+        const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+        return bufferToBase64Url(hashBuffer);
+    };
+
+    const bufferToBase64Url = (buffer: ArrayBuffer) => {
+        return btoa(String.fromCharCode(...new Uint8Array(buffer)))
+            .replace(/=/g, '')
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_');
+    };
+
     const codeVerifier = generateRandomString(128);
     const codeChallenge = await sha256(codeVerifier);
-    
+
     localStorage.setItem('code_verifier', codeVerifier);
 
-    const authUrl = `https://accounts.spotify.com/authorize?` +
-      `client_id=${CLIENT_ID}&` +
-      `response_type=code&` +
-      `redirect_uri=${encodeURIComponent(REDIRECT_URI)}&` +
-      `scope=${encodeURIComponent(SCOPES)}&` +
-      `code_challenge_method=S256&` +
-      `code_challenge=${codeChallenge}`;
+    const authUrl = `https://accounts.spotify.com/authorize` +
+      `?client_id=${CLIENT_ID}` +
+      `&response_type=code` +
+      `&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
+      `&scope=${encodeURIComponent(SCOPES)}` +
+      `&code_challenge_method=S256` +
+      `&code_challenge=${codeChallenge}`;
     
     window.location.href = authUrl;
-  };
+};
 
   const searchSpotifyTracks = async (query: string): Promise<void> => {
     if (!accessToken) {

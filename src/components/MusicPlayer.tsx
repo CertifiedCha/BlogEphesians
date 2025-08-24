@@ -80,7 +80,7 @@ export const MusicPlayer: React.FC = () => {
 
   // Spotify API configuration
   // IMPORTANT: Replace with your actual Spotify Client ID
-  const CLIENT_ID = 'y83721f40f91c46bcae3379a3762f114e';
+  const CLIENT_ID = '83721f40f91c46bcae3379a3762f114e';
   // IMPORTANT: Replace with your actual Redirect URI
   const REDIRECT_URI = 'https://blogephesians.onrender.com/callback';
   const SCOPES = [

@@ -112,7 +112,7 @@ export const MusicPlayer: React.FC = () => {
             const playlistId = await createPlaylist(tracksUri);
             
             setTimeout(() => {
-              setIframeUri(`https://open.spotify.com/embed/playlist/1kdvLmZfojTrBqP1YAfQxf?utm_source=generator&theme=0{playlistId}?utm_source=generator`);
+              setIframeUri(`https://open.spotify.com/embed/playlist/${playlistId}?utm_source=generator`);
               resolve(null);
             }, 2000);
           } catch (e) {
@@ -153,6 +153,12 @@ export const MusicPlayer: React.FC = () => {
       setSearchResults([]);
     } finally {
       setIsSearching(false);
+    }
+  };
+
+  const handleSearch = () => {
+    if (searchQuery.trim() !== '') {
+      searchSpotifyTracks(searchQuery);
     }
   };
 
